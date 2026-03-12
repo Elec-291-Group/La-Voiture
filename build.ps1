@@ -13,8 +13,17 @@ param(
     [string]$Target    = "build",
     [string]$Port      = "COM12",
     [string]$Baud      = "115200",
-    [string]$FlashTool = "D:\stm32flash\stm32flash.exe"
+    [string]$FlashTool = ""
 )
+
+# --- Auto-detect stm32flash if not specified ---------------------------------
+if (-not $FlashTool) {
+    $candidates = @(
+        "D:\stm32flash\stm32flash.exe",
+        "C:\stm32flash\stm32flash.exe"
+    )
+    $FlashTool = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+}
 
 $ErrorActionPreference = "Stop"
 
