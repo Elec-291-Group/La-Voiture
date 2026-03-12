@@ -11,7 +11,7 @@
 
 param(
     [string]$Target    = "build",
-    [string]$Port      = "COM12",
+    [string]$Port      = "",
     [string]$Baud      = "115200",
     [string]$FlashTool = ""
 )
@@ -53,8 +53,11 @@ switch ($Target) {
             throw "build/ not found. Run cmake first from Git Bash:`n  cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake"
         }
         Write-Host "[cmake] Building '$ProjectName'..." -ForegroundColor Cyan
-        cmake --build $BuildDir
-        if ($LASTEXITCODE -ne 0) { throw "Build failed" }
+        Push-Location $ProjectRoot
+        cmake --build build
+        $exitCode = $LASTEXITCODE
+        Pop-Location
+        if ($exitCode -ne 0) { throw "Build failed" }
 
         Write-Host "[objcopy] $ProjectName.elf -> $ProjectName.bin" -ForegroundColor Cyan
         arm-none-eabi-objcopy -O binary $ElfFile $BinFile
@@ -62,6 +65,32 @@ switch ($Target) {
     }
 
     "flash" {
+        if (-not $Port) {
+            Write-Host "[error] -Port is required for flash." -ForegroundColor Red
+            Write-Host "Available COM ports:" -ForegroundColor Yellow
+            $ports = [System.IO.Ports.SerialPort]::GetPortNames() | Sort-Object
+            if ($ports.Count -eq 0) {
+                Write-Host "  (none detected)" -ForegroundColor DarkGray
+            } else {
+                foreach ($p in $ports) {
+                    Write-Host "  $p" -ForegroundColor White
+                }
+            }
+            Write-Host "Usage:" -ForegroundColor Yellow
+            Write-Host "  .\build.ps1 flash -Port COM3" -ForegroundColor White
+            exit 1
+        }
+        $availablePorts = [System.IO.Ports.SerialPort]::GetPortNames()
+        if ($Port -notin $availablePorts) {
+            Write-Host "[error] Port '$Port' not found." -ForegroundColor Red
+            Write-Host "Available COM ports:" -ForegroundColor Yellow
+            if ($availablePorts.Count -eq 0) {
+                Write-Host "  (none detected)" -ForegroundColor DarkGray
+            } else {
+                ($availablePorts | Sort-Object) | ForEach-Object { Write-Host "  $_" -ForegroundColor White }
+            }
+            exit 1
+        }
         if (-not (Test-Path $BinFile))   { throw "$ProjectName.bin not found - run build first" }
         if (-not (Test-Path $FlashTool)) { throw "stm32flash not found at: $FlashTool" }
         Write-Host "[flash] Writing to $Port at $Baud baud..." -ForegroundColor Cyan
