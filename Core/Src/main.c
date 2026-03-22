@@ -51,6 +51,7 @@
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
+void Set_Car_Speed(int speed);
 
 /* USER CODE END PFP */
 
@@ -91,7 +92,10 @@ int main(void)
   MX_USART1_UART_Init();
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
-
+  //starting PWM generation
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
+  
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -102,12 +106,20 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+
+    //test sequence
+    Set_Car_Speed(100); //full speed forward
+    HAL_Delay(2000);
+
+    Set_Car_Speed(0); //stop
     HAL_Delay(1000);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+
+    Set_Car_Speed(-50); //half speed backward
+    HAL_Delay(2000);
+
+    Set_Car_Speed(0); //stop
     HAL_Delay(1000);
+   
   }
   /* USER CODE END 3 */
 }
@@ -160,6 +172,36 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+void Set_Car_Speed(int speed){
+  //speed should be between 0 and 100
+  if(speed > 100) 
+    speed = 100;
+  if(speed < -100) 
+    speed = -100;
+  //STOP
+  if(speed == 0) {
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 0);
+  }
+  //FORWARD
+  else if(speed > 0) {
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+
+    // Multiply by 10 (e.g., 100% * 10 = 1000 ARR)
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, speed * 10); 
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, speed * 10);
+  }
+  //BACKWARD
+  else{
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+
+    // Multiply by -10 (e.g., -100% * -10 = 1000 ARR)
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, (-speed) * 10); 
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, (-speed) * 10);
+  }
+}
 
 /* USER CODE END 4 */
 
