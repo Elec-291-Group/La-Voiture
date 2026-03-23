@@ -61,11 +61,11 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PA7 */
-  GPIO_InitStruct.Pin = GPIO_PIN_7;
+  /*Configure GPIO pin : IR_Receiver_Pin */
+  GPIO_InitStruct.Pin = IR_Receiver_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  HAL_GPIO_Init(IR_Receiver_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : motor1_hbridge1_Pin */
   GPIO_InitStruct.Pin = motor1_hbridge1_Pin;

@@ -57,12 +57,18 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define Bluetooth_TX_Pin GPIO_PIN_2
+#define Bluetooth_TX_GPIO_Port GPIOA
+#define Bluetooth_RX_Pin GPIO_PIN_3
+#define Bluetooth_RX_GPIO_Port GPIOA
 #define motor2_hbridge1_Pin GPIO_PIN_4
 #define motor2_hbridge1_GPIO_Port GPIOA
 #define motor1_hbridge2_Pin GPIO_PIN_5
 #define motor1_hbridge2_GPIO_Port GPIOA
 #define motor2_hbridge2_Pin GPIO_PIN_6
 #define motor2_hbridge2_GPIO_Port GPIOA
+#define IR_Receiver_Pin GPIO_PIN_7
+#define IR_Receiver_GPIO_Port GPIOA
 #define motor1_hbridge1_Pin GPIO_PIN_0
 #define motor1_hbridge1_GPIO_Port GPIOB
 
