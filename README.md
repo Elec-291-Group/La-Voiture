@@ -16,7 +16,7 @@ mkdir build && cd build && cmake .. -DCMAKE_TOOLCHAIN_FILE=../cmake/gcc-arm-none
 python build.py build
 python build.py flash -Port COM3          # Windows
 ls /dev/tty.* (to check usb device) # macOS
-python build.py flash -p /dev//dev/tty.usbserial-DU0DOMGO (with individual usb) # macOS
+python build.py flash -p /dev/tty.usbserial-DU0DOMGO (with individual usb) # macOS
 python build.py clean
 ```
 
