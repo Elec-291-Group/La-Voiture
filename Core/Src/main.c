@@ -19,10 +19,10 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
+#include "i2c.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
-#include "i2c.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -108,10 +108,13 @@ int main(void)
   MX_USART1_UART_Init();
   MX_TIM2_Init();
   MX_ADC_Init();
+  MX_I2C1_Init();
+  MX_USART2_UART_Init();
+  MX_TIM22_Init();
   /* USER CODE BEGIN 2 */
   //starting PWM generation
-  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
-  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
+  HAL_TIM_PWM_Start(&htim22, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim22, TIM_CHANNEL_2);
   
   
   // Configure ADC channel
@@ -311,8 +314,8 @@ void Set_Car_Speed(int speed){
     speed = -100;
   //STOP
   if(speed == 0) {
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 0);
+    __HAL_TIM_SET_COMPARE(&htim22, TIM_CHANNEL_1, 0);
+    __HAL_TIM_SET_COMPARE(&htim22, TIM_CHANNEL_2, 0);
   }
   //FORWARD
   else if(speed > 0) {
@@ -320,8 +323,8 @@ void Set_Car_Speed(int speed){
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
 
     // Multiply by 10 (e.g., 100% * 10 = 1000 ARR)
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, speed * 10); 
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, speed * 10);
+    __HAL_TIM_SET_COMPARE(&htim22, TIM_CHANNEL_1, speed * 10); 
+    __HAL_TIM_SET_COMPARE(&htim22, TIM_CHANNEL_2, speed * 10);
   }
   //BACKWARD
   else{
@@ -329,8 +332,8 @@ void Set_Car_Speed(int speed){
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
 
     // Multiply by -10 (e.g., -100% * -10 = 1000 ARR)
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, (-speed) * 10); 
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, (-speed) * 10);
+    __HAL_TIM_SET_COMPARE(&htim22, TIM_CHANNEL_1, (-speed) * 10); 
+    __HAL_TIM_SET_COMPARE(&htim22, TIM_CHANNEL_2, (-speed) * 10);
   }
 }
 
