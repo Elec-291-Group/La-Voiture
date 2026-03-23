@@ -60,6 +60,7 @@ static uint16_t u1_len;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
+void Set_Car_Speed(int speed);
 
 /* USER CODE END PFP */
 
@@ -108,6 +109,10 @@ int main(void)
   MX_TIM2_Init();
   MX_ADC_Init();
   /* USER CODE BEGIN 2 */
+  //starting PWM generation
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
+  
   
   // Configure ADC channel
   HAL_ADCEx_Calibration_Start(&hadc, ADC_SINGLE_ENDED);
@@ -148,6 +153,13 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
+
+    //test sequence
+    Set_Car_Speed(100); //full speed forward
+    HAL_Delay(2000);
+
+    Set_Car_Speed(0); //stop
     //HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
     /*
     if(HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_1)){
@@ -175,9 +187,13 @@ int main(void)
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
     HAL_Delay(1000);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+
+    Set_Car_Speed(-50); //half speed backward
+    HAL_Delay(2000);
+
+    Set_Car_Speed(0); //stop
     HAL_Delay(1000);
+   
     */
     /* Wait for two consecutive valid frames (address 0x0B already verified
        inside the FSM).  Frame 1 = x_byte, frame 2 = y_byte.               */
@@ -287,6 +303,36 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+void Set_Car_Speed(int speed){
+  //speed should be between 0 and 100
+  if(speed > 100) 
+    speed = 100;
+  if(speed < -100) 
+    speed = -100;
+  //STOP
+  if(speed == 0) {
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 0);
+  }
+  //FORWARD
+  else if(speed > 0) {
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+
+    // Multiply by 10 (e.g., 100% * 10 = 1000 ARR)
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, speed * 10); 
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, speed * 10);
+  }
+  //BACKWARD
+  else{
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+
+    // Multiply by -10 (e.g., -100% * -10 = 1000 ARR)
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, (-speed) * 10); 
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, (-speed) * 10);
+  }
+}
 
 /* USER CODE END 4 */
 
