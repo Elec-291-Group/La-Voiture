@@ -18,13 +18,17 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "adc.h"
+#include "i2c.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdio.h>
+#include "ir_rx.h"
+#include "vl53l0x.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -45,7 +49,10 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
+/* ── BT proxy (UART1 → UART2 → UART1) ──────────────────────────────────── */
+#define U1_LINE_MAX  128u
+static uint8_t  u1_line[U1_LINE_MAX];
+static uint16_t u1_len;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -56,6 +63,13 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+/* Route printf → UART1 via the Newlib __io_putchar hook in syscalls.c */
+int __io_putchar(int ch)
+{
+    HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1u, HAL_MAX_DELAY);
+    return ch;
+}
 
 /* USER CODE END 0 */
 
@@ -90,8 +104,26 @@ int main(void)
   MX_GPIO_Init();
   MX_USART1_UART_Init();
   MX_TIM2_Init();
+  MX_ADC_Init();
+  MX_I2C1_Init();
+  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-
+  /* Configure TIM2 for a 263 µs periodic interrupt used by the IR FSM.
+     T = 10 / 38000 Hz = 263.16 µs.
+     HSI = 16 MHz → PSC = 15 → timer clock = 1 MHz → ARR = 262 → 263 µs. */
+  htim2.Instance->PSC = 15u;
+  htim2.Instance->ARR = 262u;
+  htim2.Instance->EGR = 0x01U;   /* UG: latch new PSC/ARR immediately      */
+  HAL_NVIC_SetPriority(TIM2_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(TIM2_IRQn);
+  IR_RX_Init();
+  HAL_TIM_Base_Start_IT(&htim2);
+  printf("IR RX Ready\r\n");
+  if (VL53L0X_Init()) {
+    printf("VL53L0X OK\r\n");
+  } else {
+    printf("VL53L0X FAIL\r\n");
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -101,13 +133,59 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
-    HAL_Delay(1000);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
-    HAL_Delay(1000);
+    /* Wait for two consecutive valid frames (address 0x0B already verified
+       inside the FSM).  Frame 1 = x_byte, frame 2 = y_byte.               */
+    if (IR_RX_Available() >= 2) {
+      uint8_t x_byte, y_byte;
+      IR_RX_GetFrame(&x_byte);
+      IR_RX_GetFrame(&y_byte);
+      printf("X=%3u Y=%3u\r\n", x_byte, y_byte);
+    }
+
+    /* ── VL53L0X distance read every 200 ms ─────────────────────────────── */
+    {
+      static uint32_t last_dist_ms;
+      if (HAL_GetTick() - last_dist_ms >= 200u) {
+        last_dist_ms = HAL_GetTick();
+        uint16_t dist = VL53L0X_ReadDistance();
+        if (dist != 0xFFFFu) {
+          printf("D=%4u mm\r\n", dist);
+        }
+      }
+    }
+
+    /* ── BT proxy: forward "B:<payload>\r\n" from UART1 to JDY-23 on UART2,
+       then echo the module's reply back to UART1. ──────────────────────── */
+    {
+      uint8_t ch;
+      if (HAL_UART_Receive(&huart1, &ch, 1u, 1u) == HAL_OK) {
+        if (ch == '\r' || ch == '\n') {
+          if (u1_len > 0u) {
+            u1_line[u1_len] = '\0';
+            if (u1_line[0] == 'B' && u1_line[1] == ':' && u1_len > 2u) {
+              /* Send payload + CRLF to BT module */
+              const uint8_t crlf[2] = {'\r', '\n'};
+              HAL_UART_Transmit(&huart2, u1_line + 2u, u1_len - 2u, HAL_MAX_DELAY);
+              HAL_UART_Transmit(&huart2, (uint8_t *)crlf, 2u, HAL_MAX_DELAY);
+              /* Collect reply: 500 ms for first byte, 50 ms between bytes */
+              uint8_t  reply[256];
+              uint16_t rlen = 0u;
+              while (rlen < sizeof(reply)) {
+                uint32_t tmo = (rlen == 0u) ? 500u : 50u;
+                if (HAL_UART_Receive(&huart2, &reply[rlen], 1u, tmo) != HAL_OK) break;
+                rlen++;
+              }
+              if (rlen > 0u) {
+                HAL_UART_Transmit(&huart1, reply, rlen, HAL_MAX_DELAY);
+              }
+            }
+            u1_len = 0u;
+          }
+        } else if (u1_len < U1_LINE_MAX - 1u) {
+          u1_line[u1_len++] = ch;
+        }
+      }
+    }
   }
   /* USER CODE END 3 */
 }
@@ -151,8 +229,11 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART1;
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART1|RCC_PERIPHCLK_USART2
+                              |RCC_PERIPHCLK_I2C1;
   PeriphClkInit.Usart1ClockSelection = RCC_USART1CLKSOURCE_PCLK2;
+  PeriphClkInit.Usart2ClockSelection = RCC_USART2CLKSOURCE_PCLK1;
+  PeriphClkInit.I2c1ClockSelection = RCC_I2C1CLKSOURCE_PCLK1;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
