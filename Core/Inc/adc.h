@@ -35,12 +35,26 @@ extern "C" {
 extern ADC_HandleTypeDef hadc;
 
 /* USER CODE BEGIN Private defines */
+#ifndef ADC_H
+#define ADC_H
+// calibrated VDDA
+extern uint32_t VDDA;
+
+#endif
+
+// the vrefint adc value is measured at exactly 3V.
+// the formula Aref_cal * 3 / Aref_measured gives us VDDA. Which could be used for calibration purpose
+#define AREFINT_CAL (*(volatile uint16_t*)0x1FF80078) // access the vrefint calibrated adc value
 
 /* USER CODE END Private defines */
 
 void MX_ADC_Init(void);
 
 /* USER CODE BEGIN Prototypes */
+
+void vdda_calibration(void);
+uint32_t read_adc_channel(uint32_t channel);
+uint32_t adc_to_voltage(uint32_t adc_value);
 
 /* USER CODE END Prototypes */
 

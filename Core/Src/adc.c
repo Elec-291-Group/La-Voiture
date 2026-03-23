@@ -21,6 +21,7 @@
 #include "adc.h"
 
 /* USER CODE BEGIN 0 */
+uint32_t VDDA;
 
 /* USER CODE END 0 */
 
@@ -46,7 +47,7 @@ void MX_ADC_Init(void)
   hadc.Init.OversamplingMode = DISABLE;
   hadc.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV1;
   hadc.Init.Resolution = ADC_RESOLUTION_12B;
-  hadc.Init.SamplingTime = ADC_SAMPLETIME_1CYCLE_5;
+  hadc.Init.SamplingTime = ADC_SAMPLETIME_39CYCLES_5;
   hadc.Init.ScanConvMode = ADC_SCAN_DIRECTION_FORWARD;
   hadc.Init.DataAlign = ADC_DATAALIGN_RIGHT;
   hadc.Init.ContinuousConvMode = DISABLE;
@@ -84,6 +85,14 @@ void MX_ADC_Init(void)
   /** Configure for the selected ADC regular channel to be converted.
   */
   sConfig.Channel = ADC_CHANNEL_9;
+  if (HAL_ADC_ConfigChannel(&hadc, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel to be converted.
+  */
+  sConfig.Channel = ADC_CHANNEL_VREFINT;
   if (HAL_ADC_ConfigChannel(&hadc, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -156,5 +165,48 @@ void HAL_ADC_MspDeInit(ADC_HandleTypeDef* adcHandle)
 }
 
 /* USER CODE BEGIN 1 */
+
+uint32_t read_adc_channel(uint32_t channel)
+{
+    ADC_ChannelConfTypeDef sConfig = {0};
+
+    sConfig.Channel = channel;
+    sConfig.Rank = ADC_RANK_CHANNEL_NUMBER;
+
+    HAL_ADC_Stop(&hadc);
+
+    /* remove old channels */
+    sConfig.Rank = ADC_RANK_NONE;
+    sConfig.Channel = ADC_CHANNEL_0;
+    HAL_ADC_ConfigChannel(&hadc, &sConfig);
+    sConfig.Channel = ADC_CHANNEL_1;
+    HAL_ADC_ConfigChannel(&hadc, &sConfig);
+    sConfig.Channel = ADC_CHANNEL_9;
+    HAL_ADC_ConfigChannel(&hadc, &sConfig);
+    sConfig.Channel = ADC_CHANNEL_VREFINT;
+    HAL_ADC_ConfigChannel(&hadc, &sConfig);
+
+    /* enable wanted channel */
+    sConfig.Channel = channel;
+    sConfig.Rank = ADC_RANK_CHANNEL_NUMBER;
+    HAL_ADC_ConfigChannel(&hadc, &sConfig);
+
+    HAL_ADC_Start(&hadc);
+    HAL_ADC_PollForConversion(&hadc, HAL_MAX_DELAY);
+    uint32_t value = HAL_ADC_GetValue(&hadc);
+    HAL_ADC_Stop(&hadc);
+
+    return value;
+}
+
+void vdda_calibration(void){
+  VDDA = AREFINT_CAL * 3000 / read_adc_channel(ADC_CHANNEL_VREFINT);
+  return;
+}
+
+// convert from adc value to voltage value, return in mv
+uint32_t adc_to_voltage(uint32_t adc_value){
+  return adc_value * VDDA / 4095;
+}
 
 /* USER CODE END 1 */

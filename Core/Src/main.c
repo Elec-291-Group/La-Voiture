@@ -19,13 +19,15 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
-#include "i2c.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
+#include "i2c.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <string.h>
+#include <stdio.h>
 #include <stdio.h>
 #include "ir_rx.h"
 #include "vl53l0x.h"
@@ -105,6 +107,19 @@ int main(void)
   MX_USART1_UART_Init();
   MX_TIM2_Init();
   MX_ADC_Init();
+  /* USER CODE BEGIN 2 */
+  
+  // Configure ADC channel
+  HAL_ADCEx_Calibration_Start(&hadc, ADC_SINGLE_ENDED);
+  vdda_calibration();
+
+  uint32_t adc0;
+  uint32_t v0;
+  uint32_t adc1;
+  uint32_t adc9;
+
+  char buffer[20];
+
   MX_I2C1_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
@@ -133,6 +148,37 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    //HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
+    /*
+    if(HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_1)){
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+    }
+    else{
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+    }
+    */
+
+    adc0 = read_adc_channel(ADC_CHANNEL_1);
+    v0 = adc_to_voltage(adc0);
+
+
+    //adc_voltage = adc_value * 3300 / 4095;
+    //sprintf(buffer, "%u\n", (uint32_t)AREFINT_CAL);
+    sprintf(buffer, "%lu\n", v0);
+
+    HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
+    HAL_Delay(1000);
+
+    /*
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+    HAL_Delay(1000);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+    HAL_Delay(1000);
+    */
     /* Wait for two consecutive valid frames (address 0x0B already verified
        inside the FSM).  Frame 1 = x_byte, frame 2 = y_byte.               */
     if (IR_RX_Available() >= 2) {
