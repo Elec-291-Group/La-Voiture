@@ -38,7 +38,14 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define U1_LINE_MAX  128u
+#define DEVICE_ADDR 0x6B
+#define REG_WHOAMI 0x0F //test for imu data recieve
+#define REG_CTRL1_XL 0x10 //initialize imu for sending accelerometer/gyroscope 
+#define REG_CTRL3_C 0x12 
 
+//acceleration
+#define REG_OUTX_L_XL 0x28
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -50,7 +57,6 @@
 
 /* USER CODE BEGIN PV */
 /* ── BT proxy (UART1 → UART2 → UART1) ──────────────────────────────────── */
-#define U1_LINE_MAX  128u
 static uint8_t  u1_line[U1_LINE_MAX];
 static uint16_t u1_len;
 /* USER CODE END PV */
@@ -81,6 +87,26 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
+  
+  /* LQFP32 PINOUT
+              ----------
+        VDD -|1       32|- VSS
+       PC14 -|2       31|- BOOT0
+       PC15 -|3       30|- PB7
+       NRST -|4       29|- PB6
+       VDDA -|5       28|- PB5
+  (LED) PA0 -|6       27|- PB4
+        PA1 -|7       26|- PB3
+        PA2 -|8       25|- PA15 (PWM output channel 1 of TIM2)
+        PA3 -|9       24|- PA14
+        PA4 -|10      23|- PA13
+        PA5 -|11      22|- PA12
+        PA6 -|12      21|- PA11
+        PA7 -|13      20|- PA10 (Reserved for RXD)
+        PB0 -|14      19|- PA9  (Reserved for TXD)
+        PB1 -|15      18|- PA8
+        VSS -|16      17|- VDD
+  */   
 
   /* USER CODE END 1 */
 
@@ -119,11 +145,30 @@ int main(void)
   IR_RX_Init();
   HAL_TIM_Base_Start_IT(&htim2);
   printf("IR RX Ready\r\n");
-  if (VL53L0X_Init()) {
+  /*if (VL53L0X_Init()) {
     printf("VL53L0X OK\r\n");
   } else {
     printf("VL53L0X FAIL\r\n");
-  }
+  } */
+
+  /* imu WHOAMI test */
+  char msg[64];
+  uint8_t data;
+
+  /*IMU Register Initialization*/
+  uint8_t init_ctrl1 = 0x40; //01000000
+  uint8_t init_ctrl3 = 0x44; //01000100
+
+  /*accleration values*/
+  uint8_t acceleration_data[6]; //16 bits for each value
+  uint16_t acceleration_xdata; 
+  uint16_t acceleration_ydata; 
+  uint16_t acceleration_zdata; 
+
+  /*registers writing */
+  HAL_I2C_Mem_Write(&hi2c1, (DEVICE_ADDR << 1), REG_CTRL1_XL, I2C_MEMADD_SIZE_8BIT, &init_ctrl1, 1, 50);
+  HAL_I2C_Mem_Write(&hi2c1, (DEVICE_ADDR << 1), REG_CTRL3_C, I2C_MEMADD_SIZE_8BIT, &init_ctrl3, 1, 50);
+  
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -135,14 +180,18 @@ int main(void)
     /* USER CODE BEGIN 3 */
     /* Wait for two consecutive valid frames (address 0x0B already verified
        inside the FSM).  Frame 1 = x_byte, frame 2 = y_byte.               */
+    /*
     if (IR_RX_Available() >= 2) {
       uint8_t x_byte, y_byte;
       IR_RX_GetFrame(&x_byte);
       IR_RX_GetFrame(&y_byte);
       printf("X=%3u Y=%3u\r\n", x_byte, y_byte);
     }
+    */
 
     /* ── VL53L0X distance read every 200 ms ─────────────────────────────── */
+
+    /*
     {
       static uint32_t last_dist_ms;
       if (HAL_GetTick() - last_dist_ms >= 200u) {
@@ -153,9 +202,12 @@ int main(void)
         }
       }
     }
+    */
 
     /* ── BT proxy: forward "B:<payload>\r\n" from UART1 to JDY-23 on UART2,
        then echo the module's reply back to UART1. ──────────────────────── */
+
+    /*
     {
       uint8_t ch;
       if (HAL_UART_Receive(&huart1, &ch, 1u, 1u) == HAL_OK) {
@@ -163,11 +215,11 @@ int main(void)
           if (u1_len > 0u) {
             u1_line[u1_len] = '\0';
             if (u1_line[0] == 'B' && u1_line[1] == ':' && u1_len > 2u) {
-              /* Send payload + CRLF to BT module */
+              /* Send payload + CRLF to BT module */ /*
               const uint8_t crlf[2] = {'\r', '\n'};
               HAL_UART_Transmit(&huart2, u1_line + 2u, u1_len - 2u, HAL_MAX_DELAY);
               HAL_UART_Transmit(&huart2, (uint8_t *)crlf, 2u, HAL_MAX_DELAY);
-              /* Collect reply: 500 ms for first byte, 50 ms between bytes */
+              /* Collect reply: 500 ms for first byte, 50 ms between bytes 
               uint8_t  reply[256];
               uint16_t rlen = 0u;
               while (rlen < sizeof(reply)) {
@@ -185,6 +237,27 @@ int main(void)
           u1_line[u1_len++] = ch;
         }
       }
+    }
+
+    */
+
+   // HAL_I2C_Mem_Read(&hi2c1, (DEVICE_ADDR  << 1), REG_WHOAMI, I2C_MEMADD_SIZE_8BIT, &data, 1, 50);
+
+    if (HAL_I2C_Mem_Read(&hi2c1, (DEVICE_ADDR << 1), REG_OUTX_L_XL, I2C_MEMADD_SIZE_8BIT, acceleration_data, 6, 1000) == HAL_OK)
+    {
+      acceleration_xdata = (uint16_t)(acceleration_data[1] << 8) | (acceleration_data[0]);
+      acceleration_ydata = (uint16_t)(acceleration_data[3] << 8) | (acceleration_data[2]);
+      acceleration_zdata = (uint16_t)(acceleration_data[5] << 8) | (acceleration_data[4]);
+
+      printf("%02X %02X %02X %02X %02X %02X\r\n",acceleration_data[0], acceleration_data[1], acceleration_data[2], acceleration_data[3], acceleration_data[4], acceleration_data[5]);
+
+      //printf("accel x = 0x%02X\r\n", acceleration_xdata);
+      //printf("accel y = 0x%02X\r\n", acceleration_ydata);
+     // printf("accel z = 0x%02X\r\n", acceleration_zdata);
+
+    } else 
+    {
+        printf("dumbass didnt work\r\n");
     }
   }
   /* USER CODE END 3 */
