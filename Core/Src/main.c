@@ -29,6 +29,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdio.h>
+#include <math.h>
 #include "ir_rx.h"
 #include "vl53l0x.h"
 /* USER CODE END Includes */
@@ -40,6 +41,13 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
+//-------- proportional gain for line tracking control ---------------
+// needed to be tuned !!!
+#define KP 5
+#define KS 5
+//-------- base power of motor in auto mode -----------------
+#define PB 50
 
 /* USER CODE END PD */
 
@@ -121,11 +129,6 @@ int main(void)
   HAL_ADCEx_Calibration_Start(&hadc, ADC_SINGLE_ENDED);
   vdda_calibration();
 
-  uint32_t adc0;
-  uint32_t v0;
-  uint32_t adc1;
-  uint32_t adc9;
-
   char buffer[20];
 
   MX_I2C1_Init();
@@ -152,14 +155,6 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
-
-    //test sequence
-    Set_Left_Motor(100);  // Left motor full forward
-    Set_Right_Motor(100); // Right motor full forward
-
-    adc0 = read_adc_channel(ADC_CHANNEL_1);
-    v0 = adc_to_voltage(adc0);
    
     /* Wait for two consecutive valid frames (address 0x0B already verified
        inside the FSM).  Frame 1 = x_byte, frame 2 = y_byte.               */
@@ -275,6 +270,35 @@ void Set_Right_Motor(int speed){
     __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 0); 
     __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, (-speed) * 10);
   }
+}
+
+void line_tracking(void){
+  uint32_t adc0;
+  uint32_t v_left;
+  uint32_t adc1;
+  uint32_t v_right;
+  uint32_t adc9;
+  uint32_t v_front;
+  int base_power;
+  int error;
+  int left_power;
+  int right_power;
+
+  adc0 = read_adc_channel(ADC_CHANNEL_0);
+  adc1 = read_adc_channel(ADC_CHANNEL_1);
+  adc9 = read_adc_channel(ADC_CHANNEL_9);
+  v_left = adc_to_voltage(adc0);
+  v_right = adc_to_voltage(adc1);
+  v_front = adc_to_voltage(adc9);
+
+  error = (int)v_left - (int)v_right;
+  base_power = PB - KS * abs(error);
+
+  left_power = base_power - KP * error;
+  right_power = base_power + KP * error;
+
+  Set_Left_Motor(left_power);
+  Set_Right_Motor(right_power);
 }
 
 /* USER CODE END 4 */
