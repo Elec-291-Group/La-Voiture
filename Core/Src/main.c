@@ -28,7 +28,6 @@
 /* USER CODE BEGIN Includes */
 #include <string.h>
 #include <stdio.h>
-#include <stdio.h>
 #include "ir_rx.h"
 #include "vl53l0x.h"
 /* USER CODE END Includes */
@@ -40,7 +39,14 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define U1_LINE_MAX  128u
+#define DEVICE_ADDR 0x6B
+#define REG_WHOAMI 0x0F //test for imu data recieve
+#define REG_CTRL1_XL 0x10 //initialize imu for sending accelerometer/gyroscope 
+#define REG_CTRL3_C 0x12 
 
+//acceleration
+#define REG_OUTX_L_XL 0x28
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -52,16 +58,24 @@
 
 /* USER CODE BEGIN PV */
 /* ── BT proxy (UART1 → UART2 → UART1) ──────────────────────────────────── */
-#define U1_LINE_MAX  128u
 static uint8_t  u1_line[U1_LINE_MAX];
 static uint16_t u1_len;
+uint8_t acceleration_data[6]; //16 bits for each value
+/*accleration values*/
+uint16_t acceleration_xdata; 
+uint16_t acceleration_ydata; 
+uint16_t acceleration_zdata; 
+static uint8_t init_ctrl1 = 0x40; // 01000000
+static uint8_t init_ctrl3 = 0x44; // 01000100
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-void Set_Left_Motor(int speed);
-void Set_Right_Motor(int speed);
+void Set_Car_Speed(int speed);
+void initializeIMU(void);
+void sampleAcceleration(void);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -84,6 +98,26 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
+  
+  /* LQFP32 PINOUT
+              ----------
+        VDD -|1       32|- VSS
+       PC14 -|2       31|- BOOT0
+       PC15 -|3       30|- PB7
+       NRST -|4       29|- PB6
+       VDDA -|5       28|- PB5
+  (LED) PA0 -|6       27|- PB4
+        PA1 -|7       26|- PB3
+        PA2 -|8       25|- PA15 (PWM output channel 1 of TIM2)
+        PA3 -|9       24|- PA14
+        PA4 -|10      23|- PA13
+        PA5 -|11      22|- PA12
+        PA6 -|12      21|- PA11
+        PA7 -|13      20|- PA10 (Reserved for RXD)
+        PB0 -|14      19|- PA9  (Reserved for TXD)
+        PB1 -|15      18|- PA8
+        VSS -|16      17|- VDD
+  */   
 
   /* USER CODE END 1 */
 
@@ -114,8 +148,7 @@ int main(void)
   //starting PWM generation
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
-  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);
-  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);
+  
   
   // Configure ADC channel
   HAL_ADCEx_Calibration_Start(&hadc, ADC_SINGLE_ENDED);
@@ -129,61 +162,53 @@ int main(void)
   char buffer[20];
 
   MX_I2C1_Init();
-  //MX_USART2_UART_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-  /* Configure TIM6 for a 263 µs periodic interrupt (IR FSM tick).
-     PSC=15 already set by CubeMX → 1 MHz clock. Override ARR: 262 → 263 µs. */
-  htim6.Instance->ARR = 262u;
-  htim6.Instance->EGR = 0x01U;   /* UG: latch new ARR immediately */
+  /* Configure TIM2 for a 263 µs periodic interrupt used by the IR FSM.
+     T = 10 / 38000 Hz = 263.16 µs.
+     HSI = 16 MHz → PSC = 15 → timer clock = 1 MHz → ARR = 262 → 263 µs. */
+  htim2.Instance->PSC = 15u;
+  htim2.Instance->ARR = 262u;
+  htim2.Instance->EGR = 0x01U;   /* UG: latch new PSC/ARR immediately      */
+  HAL_NVIC_SetPriority(TIM2_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(TIM2_IRQn);
   IR_RX_Init();
-  HAL_TIM_Base_Start_IT(&htim6);
+  HAL_TIM_Base_Start_IT(&htim2);
   printf("IR RX Ready\r\n");
-  if (VL53L0X_Init()) {
+  /*if (VL53L0X_Init()) {
     printf("VL53L0X OK\r\n");
   } else {
     printf("VL53L0X FAIL\r\n");
-  }
+  } */
+
+  /* imu WHOAMI test */
+  char msg[64];
+  uint8_t data;
+
+  /*registers writing */
+  HAL_I2C_Mem_Write(&hi2c1, (DEVICE_ADDR << 1), REG_CTRL1_XL, I2C_MEMADD_SIZE_8BIT, &init_ctrl1, 1, 50);
+  HAL_I2C_Mem_Write(&hi2c1, (DEVICE_ADDR << 1), REG_CTRL3_C, I2C_MEMADD_SIZE_8BIT, &init_ctrl3, 1, 50);
+  
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+
+    initializeIMU();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
     HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
 
     //test sequence
-    Set_Left_Motor(100);  // Left motor full forward
-    Set_Right_Motor(100); // Right motor full forward
+    Set_Car_Speed(100); //full speed forward
+    sampleAcceleration(); //acceration x, y, z
 
-    adc0 = read_adc_channel(ADC_CHANNEL_1);
-    v0 = adc_to_voltage(adc0);
-   
-    /* Wait for two consecutive valid frames (address 0x0B already verified
-       inside the FSM).  Frame 1 = x_byte, frame 2 = y_byte.               */
-    if (IR_RX_Available() >= 2) {
-      uint8_t x_byte, y_byte;
-      IR_RX_GetFrame(&x_byte);
-      IR_RX_GetFrame(&y_byte);
-      printf("X=%3u Y=%3u\r\n", x_byte, y_byte);
-    }
-
-    /* ── VL53L0X distance read every 200 ms ─────────────────────────────── */
-    /*
-    {
-      static uint32_t last_dist_ms;
-      if (HAL_GetTick() - last_dist_ms >= 200u) {
-        last_dist_ms = HAL_GetTick();
-        uint16_t dist = VL53L0X_ReadDistance();
-        if (dist != 0xFFFFu) {
-          printf("D=%4u mm\r\n", dist);
-        }
-      }
-    }
-     */
-  }
+    HAL_Delay(1000);
+    Set_Car_Speed(0); //stop
+  }  
   /* USER CODE END 3 */
 }
 
@@ -236,47 +261,57 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-
-// LEFT MOTOR (TIM2)
-// CH1 (PA15) = Forward Pin | CH2 (PB3) = Reverse Pin
-void Set_Left_Motor(int speed){
-  if(speed > 100) speed = 100;
-  if(speed < -100) speed = -100;
-  
-  if(speed == 0) { // STOP
+void Set_Car_Speed(int speed){
+  //speed should be between 0 and 100
+  if(speed > 100) 
+    speed = 100;
+  if(speed < -100) 
+    speed = -100;
+  //STOP
+  if(speed == 0) {
     __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
     __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 0);
   }
-  else if(speed > 0) { // FORWARD: CH1 gets PWM, CH2 stays 0
+  //FORWARD
+  else if(speed > 0) {
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+
+    // Multiply by 10 (e.g., 100% * 10 = 1000 ARR)
     __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, speed * 10); 
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 0);
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, speed * 10);
   }
-  else { // REVERSE: CH1 stays 0, CH2 gets PWM
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0); 
+  //BACKWARD
+  else{
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+
+    // Multiply by -10 (e.g., -100% * -10 = 1000 ARR)
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, (-speed) * 10); 
     __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, (-speed) * 10);
   }
 }
 
-// RIGHT MOTOR (TIM2)
-// CH3 (PA2) = Forward Pin | CH4 (PA3) = Reverse Pin
-void Set_Right_Motor(int speed){
-  if(speed > 100) speed = 100;
-  if(speed < -100) speed = -100;
-  
-  if(speed == 0) { // STOP
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 0);
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, 0);
-  }
-  else if(speed > 0) { // FORWARD: CH3 gets PWM, CH4 stays 0
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, speed * 10); 
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, 0);
-  }
-  else { // REVERSE: CH3 stays 0, CH4 gets PWM
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 0); 
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, (-speed) * 10);
-  }
+void initializeIMU(void) 
+{
+  HAL_I2C_Mem_Write(&hi2c1, (DEVICE_ADDR << 1), REG_CTRL1_XL, I2C_MEMADD_SIZE_8BIT, &init_ctrl1, 1, 50);
+  HAL_I2C_Mem_Write(&hi2c1, (DEVICE_ADDR << 1), REG_CTRL3_C, I2C_MEMADD_SIZE_8BIT, &init_ctrl3, 1, 50);
 }
 
+void sampleAcceleration(void) 
+{
+  if (HAL_I2C_Mem_Read(&hi2c1, (DEVICE_ADDR << 1), REG_OUTX_L_XL, I2C_MEMADD_SIZE_8BIT, acceleration_data, 6, 1000) == HAL_OK)
+  {
+    acceleration_xdata = (uint16_t)(acceleration_data[1] << 8) | (acceleration_data[0]);
+    acceleration_ydata = (uint16_t)(acceleration_data[3] << 8) | (acceleration_data[2]);
+    acceleration_zdata = (uint16_t)(acceleration_data[5] << 8) | (acceleration_data[4]);
+
+    printf("%02X %02X %02X %02X %02X %02X\r\n",acceleration_data[0], acceleration_data[1], acceleration_data[2], acceleration_data[3], acceleration_data[4], acceleration_data[5]);
+  } else 
+  {
+    printf("dumbass didnt work\r\n");
+  }
+}
 /* USER CODE END 4 */
 
 /**
