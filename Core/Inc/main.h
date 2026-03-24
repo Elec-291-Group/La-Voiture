@@ -59,6 +59,7 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define IR_Receiver_Pin GPIO_PIN_7
 #define IR_Receiver_GPIO_Port GPIOA
+#define IR_Receiver_EXTI_IRQn EXTI4_15_IRQn
 #define left_motor_hbridge1_Pin GPIO_PIN_3
 #define left_motor_hbridge1_GPIO_Port GPIOB
 

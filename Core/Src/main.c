@@ -28,9 +28,9 @@
 /* USER CODE BEGIN Includes */
 #include <string.h>
 #include <stdio.h>
-#include <stdio.h>
 #include "ir_rx.h"
 #include "vl53l0x.h"
+#include "config.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -55,6 +55,13 @@
 #define U1_LINE_MAX  128u
 static uint8_t  u1_line[U1_LINE_MAX];
 static uint16_t u1_len;
+
+/* ── IR command state (written in ISR via HandleCommand) ─────────────────── */
+volatile uint8_t ir_joystick_x = 128u;   /* centred */
+volatile uint8_t ir_joystick_y = 128u;
+volatile uint8_t ir_mode       = 0u;     /* 0 = auto, 1 = remote */
+volatile uint8_t ir_running    = 0u;     /* 1 after start, 0 after pause/reset */
+volatile uint8_t ir_path       = 0u;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -66,13 +73,6 @@ void Set_Right_Motor(int speed);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-/* Route printf → UART1 via the Newlib __io_putchar hook in syscalls.c */
-int __io_putchar(int ch)
-{
-    HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1u, HAL_MAX_DELAY);
-    return ch;
-}
 
 /* USER CODE END 0 */
 
@@ -131,18 +131,10 @@ int main(void)
   MX_I2C1_Init();
   //MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-  /* Configure TIM6 for a 263 µs periodic interrupt (IR FSM tick).
-     PSC=15 already set by CubeMX → 1 MHz clock. Override ARR: 262 → 263 µs. */
-  htim6.Instance->ARR = 262u;
-  htim6.Instance->EGR = 0x01U;   /* UG: latch new ARR immediately */
+  /* IR receiver: configures TIM6 as free-running 1 µs counter
+     and enables EXTI on PA7 (both edges) for input-capture decoding. */
   IR_RX_Init();
-  HAL_TIM_Base_Start_IT(&htim6);
-  printf("IR RX Ready\r\n");
-  if (VL53L0X_Init()) {
-    printf("VL53L0X OK\r\n");
-  } else {
-    printf("VL53L0X FAIL\r\n");
-  }
+  VL53L0X_Init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -161,13 +153,18 @@ int main(void)
     adc0 = read_adc_channel(ADC_CHANNEL_1);
     v0 = adc_to_voltage(adc0);
    
-    /* Wait for two consecutive valid frames (address 0x0B already verified
-       inside the FSM).  Frame 1 = x_byte, frame 2 = y_byte.               */
-    if (IR_RX_Available() >= 2) {
-      uint8_t x_byte, y_byte;
-      IR_RX_GetFrame(&x_byte);
-      IR_RX_GetFrame(&y_byte);
-      printf("X=%3u Y=%3u\r\n", x_byte, y_byte);
+    /* ── IR FSM timeout watchdog ────────────────────────────────────────── */
+    IR_RX_Update();
+
+    /* ── Print joystick values when updated ─────────────────────────────── */
+    {
+      static uint8_t last_x = 128u, last_y = 128u;
+      uint8_t x = ir_joystick_x, y = ir_joystick_y;
+      if (x != last_x || y != last_y) {
+        last_x = x;
+        last_y = y;
+        printf("X=%3u Y=%3u\r\n", x, y);
+      }
     }
 
     /* ── VL53L0X distance read every 200 ms ─────────────────────────────── */
@@ -274,6 +271,62 @@ void Set_Right_Motor(int speed){
   else { // REVERSE: CH3 stays 0, CH4 gets PWM
     __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 0); 
     __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, (-speed) * 10);
+  }
+}
+
+/* ── IR command handler — called from ISR context (TIM6 tick) ───────────── */
+/* Keep this function short: no blocking calls, no printf.                    */
+void HandleCommand(uint8_t cmd_name, uint8_t data)
+{
+  switch (cmd_name)
+  {
+    case IR_CMD_START:
+      ir_running = 1u;
+      break;
+
+    case IR_CMD_PAUSE:
+      ir_running = 0u;
+      Set_Left_Motor(0);
+      Set_Right_Motor(0);
+      break;
+
+    case IR_CMD_RESET:
+      ir_running    = 0u;
+      ir_joystick_x = 128u;
+      ir_joystick_y = 128u;
+      ir_mode       = IR_MODE_AUTO;
+      ir_path       = IR_PATH_1;
+      Set_Left_Motor(0);
+      Set_Right_Motor(0);
+      break;
+
+    case IR_CMD_MODE:
+      ir_mode = data;   /* IR_MODE_AUTO or IR_MODE_REMOTE */
+      break;
+
+    case IR_CMD_PATH:
+      ir_path = data;   /* IR_PATH_1 / IR_PATH_2 / IR_PATH_3 */
+      break;
+
+    case IR_CMD_JOYSTICK_X:
+      ir_joystick_x = data;
+      if (ir_mode == IR_MODE_REMOTE && ir_running) {
+        /* Map 0-255 → -100..+100: centre 128 → 0 */
+        int spd = ((int)data - 128) * 100 / 128;
+        Set_Left_Motor(spd);
+      }
+      break;
+
+    case IR_CMD_JOYSTICK_Y:
+      ir_joystick_y = data;
+      if (ir_mode == IR_MODE_REMOTE && ir_running) {
+        int spd = ((int)data - 128) * 100 / 128;
+        Set_Right_Motor(spd);
+      }
+      break;
+
+    default:
+      break;
   }
 }
 
