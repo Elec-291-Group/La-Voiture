@@ -86,6 +86,7 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 void Set_Left_Motor(int speed);
 void Set_Right_Motor(int speed);
+void motor_remote_control(uint8_t, uint8_t);
 
 void Set_Car_Speed(int speed);
 void initializeIMU(void);
@@ -308,6 +309,8 @@ void Set_Right_Motor(int speed){
 void motor_remote_control(uint8_t x, uint8_t y){
   int x_in;
   int y_in;
+  int left_power;
+  int right_power;
   
   if(x >= 165){
     x_in = (((int)x - 165) * 100) / 90;
@@ -331,8 +334,16 @@ void motor_remote_control(uint8_t x, uint8_t y){
     y_in = 0;
   }
 
-  int left_power = x_in + y_in / TURN_PRESCALAR;
-  int right_power = x_in - y_in / TURN_PRESCALAR;
+  if(x_in == 0){
+    left_power = y_in;
+    right_power = -y_in;
+  }
+  else{
+    left_power = x_in + y_in / TURN_PRESCALAR;
+    right_power = x_in - y_in / TURN_PRESCALAR;
+  }
+  
+
 
   Set_Left_Motor(left_power);
   Set_Right_Motor(right_power);
