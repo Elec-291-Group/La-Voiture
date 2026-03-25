@@ -320,18 +320,18 @@ void Set_Right_Motor(int speed){
 }
 
 void motor_remote_control(uint8_t x, uint8_t y){
-  int x_in = (((int)x - 168) * 100) / 255;
-  int y_in = (((int)y - 173) * 100) / 255;
+  int x_in = (((int)x - 165) * 100) / 90;
+  int y_in = (((int)y - 170) * 100) / 80;
+
+  if(x_in < 20 && x_in > -20){
+    x_in = 0;
+  }
+  if(y_in < 20 && y_in > -20){
+    y_in = 0;
+  }
 
   int left_power = x_in + y_in;
   int right_power = x_in - y_in;
-
-  if(left_power < 20 && left_power > -20){
-    left_power = 0;
-  }
-  if(right_power < 20 && right_power > -20){
-    right_power = 0;
-  }
 
   Set_Left_Motor(left_power);
   Set_Right_Motor(right_power);
