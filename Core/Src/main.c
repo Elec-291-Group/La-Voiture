@@ -42,6 +42,7 @@
 #define REG_WHOAMI 0x0F //test for imu data recieve
 #define REG_CTRL1_XL 0x10 //initialize imu for sending accelerometer/gyroscope 
 #define REG_CTRL3_C 0x12 
+#define VL53L0X_I2C_ADDR 0x52 
 
 //acceleration
 #define REG_OUTX_L_XL 0x28
@@ -207,26 +208,47 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-    path_tracking();
-   
     /* ── IR FSM timeout watchdog ────────────────────────────────────────── */
     IR_RX_Update();
+    uint8_t cmd, dat;
+    while (IR_RX_GetFrame(&cmd, &dat)) {
+      HandleCommand(cmd, dat);
+    }
 
-    /* ── Drain IR ring buffer ────────────────────────────────────────────── */
-    {
-      uint8_t cmd, dat;
-      while (IR_RX_GetFrame(&cmd, &dat)) {
-        printf("RAW cmd=0x%X data=%u\r\n", cmd, dat);  /* DEBUG: remove later */
-        HandleCommand(cmd, dat);
+    /* 2. Read Distance Sensor (Every 100ms) */
+    static uint32_t last_dist_ms = 0;
+    static uint16_t current_distance = 8190; // Default to max range
+
+if (HAL_GetTick() - last_dist_ms >= 100u) {
+      last_dist_ms = HAL_GetTick();
+      
+      uint16_t reading = VL53L0X_ReadDistance();
+      if (reading != 0xFFFFu) { // 0xFFFF means error or sensor not ready
+          current_distance = reading;
+          printf("Distance: %u mm\r\n", current_distance);
+      } else {
+          current_distance = 8190; // Default to max range on error
       }
     }
 
-    motor_remote_control(ir_joystick_x, ir_joystick_y);
+    /* 3. COLLISION DETECTION OVERRIDE */
+    if (current_distance < 200) { 
+      // EMERGENCY STOP: Object is closer than whatever u set, 20cm in this case
+      Set_Left_Motor(0);
+      Set_Right_Motor(0);
+      printf("OBSTACLE DETECTED! STOPPING.\r\n");
+    } 
+    else {
+      // PATH CLEAR: Run normal driving modes
+      if (ir_mode == IR_MODE_AUTO) {
+        path_tracking();
+      } else {
+        motor_remote_control(ir_joystick_x, ir_joystick_y);
+      }
+    }
 
     /* ── Print joystick values every loop ───────────────────────────────── */
     //printf("X=%3u Y=%3u\r\n", ir_joystick_x, ir_joystick_y);
-
-    /* ── VL53L0X distance read every 200 ms ─────────────────────────────── */
     
   /* USER CODE END 3 */
   }
@@ -282,6 +304,24 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+//I2C BRIDGE FOR VL53L0X SENSOR  (inshallah taken from i2c.c)
+unsigned char i2c_read_addr8_data8(unsigned char address, unsigned char * value) {
+    return (HAL_I2C_Mem_Read(&hi2c1, VL53L0X_I2C_ADDR, address, I2C_MEMADD_SIZE_8BIT, value, 1, 100) == HAL_OK);
+}
+
+unsigned char i2c_read_addr8_data16(unsigned char address, unsigned short * value) {
+    uint8_t buf[2];
+    if (HAL_I2C_Mem_Read(&hi2c1, VL53L0X_I2C_ADDR, address, I2C_MEMADD_SIZE_8BIT, buf, 2, 100) == HAL_OK) {
+        *value = (buf[0] << 8) | buf[1]; // Sensor sends MSB first
+        return 1;
+    }
+    return 0;
+}
+
+unsigned char i2c_write_addr8_data8(unsigned char address, unsigned char value) {
+    return (HAL_I2C_Mem_Write(&hi2c1, VL53L0X_I2C_ADDR, address, I2C_MEMADD_SIZE_8BIT, &value, 1, 100) == HAL_OK);
+}
 
 // LEFT MOTOR (TIM2)
 // CH1 (PA15) = Forward Pin | CH2 (PB3) = Reverse Pin
@@ -371,8 +411,10 @@ void handle_line_tracking(void){
     my_tracking_states = Intersection_encountered;
   }
 
-  printf("left: %d; right: %d; front: %d\n", v_left, v_right, v_front);
+  printf("left: %lu; right: %lu; front: %lu\n", v_left, v_right, v_front);
   //printf("left_power: %d; right_power: %d\n", left_power, right_power);
+}
+
 void motor_remote_control(uint8_t x, uint8_t y){
   int x_in;
   int y_in;
@@ -543,7 +585,7 @@ void Error_Handler(void)
 #ifdef USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
+  * where the assert_param error has occurred.
   * @param  file: pointer to the source file name
   * @param  line: assert_param error line source number
   * @retval None
