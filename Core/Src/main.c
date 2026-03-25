@@ -217,6 +217,8 @@ int main(void)
       }
     }
 
+    motor_remote_control(ir_joystick_x, ir_joystick_y);
+
     /* ── Print joystick values every loop ───────────────────────────────── */
     //printf("X=%3u Y=%3u\r\n", ir_joystick_x, ir_joystick_y);
 
@@ -333,6 +335,8 @@ void motor_remote_control(uint8_t x, uint8_t y){
 
   Set_Left_Motor(left_power);
   Set_Right_Motor(right_power);
+}
+
 /* ── IR command handler — called from ISR context (TIM6 tick) ───────────── */
 /* Keep this function short: no blocking calls, no printf.                    */
 void HandleCommand(uint8_t cmd_name, uint8_t data)
