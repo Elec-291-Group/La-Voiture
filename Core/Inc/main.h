@@ -63,7 +63,11 @@ void Error_Handler(void);
 #define left_motor_hbridge1_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
-
+enum path_tracking_states {
+  Running,
+  Intersection_encountered,
+  Intersection_turning,
+};
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

@@ -28,8 +28,8 @@
 /* USER CODE BEGIN Includes */
 #include <string.h>
 #include <stdio.h>
-#include <stdio.h>
 #include <math.h>
+#include <stdlib.h>
 #include "ir_rx.h"
 #include "vl53l0x.h"
 /* USER CODE END Includes */
@@ -63,6 +63,9 @@
 #define U1_LINE_MAX  128u
 static uint8_t  u1_line[U1_LINE_MAX];
 static uint16_t u1_len;
+
+enum path_tracking_states my_tracking_states = Running;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -70,6 +73,10 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 void Set_Left_Motor(int speed);
 void Set_Right_Motor(int speed);
+void handle_intersection_encountered(void);
+void handle_intersection_turning(void);
+void path_tracking(void);
+void handle_line_tracking(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -129,8 +136,6 @@ int main(void)
   HAL_ADCEx_Calibration_Start(&hadc, ADC_SINGLE_ENDED);
   vdda_calibration();
 
-  char buffer[20];
-
   MX_I2C1_Init();
   //MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
@@ -156,7 +161,7 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-    line_tracking();
+    path_tracking();
    
     /* Wait for two consecutive valid frames (address 0x0B already verified
        inside the FSM).  Frame 1 = x_byte, frame 2 = y_byte.               */
@@ -274,7 +279,24 @@ void Set_Right_Motor(int speed){
   }
 }
 
-void line_tracking(void){
+void path_tracking(void){
+  switch(my_tracking_states){
+    case Running:
+      handle_line_tracking();
+      break;
+    
+    case Intersection_encountered:
+      handle_intersection_encountered();
+      break;
+
+    case Intersection_turning:
+      handle_intersection_turning();
+      break;
+      
+  }
+}
+
+void handle_line_tracking(void){
   uint32_t adc0;
   uint32_t v_left;
   uint32_t adc1;
@@ -301,10 +323,25 @@ void line_tracking(void){
   left_power = base_power - KP * error;
   right_power = base_power + KP * error;
 
-  //printf("left: %d; right: %d; front: %d\n", v_left, v_right, v_front);
-  printf("left_power: %d; right_power: %d\n", left_power, right_power);
+  if(v_front > 1000){
+    my_tracking_states = Intersection_encountered;
+  }
+
+  printf("left: %d; right: %d; front: %d\n", v_left, v_right, v_front);
+  //printf("left_power: %d; right_power: %d\n", left_power, right_power);
   Set_Left_Motor(left_power);
   Set_Right_Motor(right_power);
+}
+
+void handle_intersection_encountered(void){
+  Set_Left_Motor(0);
+  Set_Right_Motor(0);
+  my_tracking_states = Intersection_turning;
+}
+
+void handle_intersection_turning(void){
+  Set_Left_Motor(-20); 
+  Set_Right_Motor(20);
 }
 
 /* USER CODE END 4 */
