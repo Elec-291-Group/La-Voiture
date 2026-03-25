@@ -63,6 +63,7 @@
 static uint8_t  u1_line[U1_LINE_MAX];
 static uint16_t u1_len;
 
+#define TURN_PRESCALAR 2 // power prescalar to reduce turn speed
 /* ── IR command state (written in ISR via HandleCommand) ─────────────────── */
 volatile uint8_t ir_joystick_x = 128u;   /* centred */
 volatile uint8_t ir_joystick_y = 128u;
@@ -187,21 +188,6 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
-
-    /* IMU testing code 
-    //test sequence
-    Set_Car_Speed(100); //full speed forward
-    sampleAcceleration(); //acceration x, y, z
-
-    HAL_Delay(1000);
-    Set_Car_Speed(0); //stop
-
-    //test sequence
-    Set_Left_Motor(100);  // Left motor full forward
-    Set_Right_Motor(100); // Right motor full forward
-    */
-
     adc0 = read_adc_channel(ADC_CHANNEL_1);
     v0 = adc_to_voltage(adc0);
    
@@ -320,9 +306,24 @@ void Set_Right_Motor(int speed){
 }
 
 void motor_remote_control(uint8_t x, uint8_t y){
-  int x_in = (((int)x - 165) * 100) / 90;
-  int y_in = (((int)y - 170) * 100) / 80;
-
+  int x_in;
+  int y_in;
+  
+  if(x >= 165){
+    x_in = (((int)x - 165) * 100) / 90;
+  }
+  else{
+    x_in = (((int)x - 165) * 100) / 165;
+  }
+  
+  if(y >= 170){
+    y_in = (((int)y - 170) * 100) / 85;
+  }
+  else{
+    y_in = (((int)y - 170) * 100) / 170;
+  }
+  
+  /* Dead zone for joy stick */
   if(x_in < 20 && x_in > -20){
     x_in = 0;
   }
@@ -330,8 +331,8 @@ void motor_remote_control(uint8_t x, uint8_t y){
     y_in = 0;
   }
 
-  int left_power = x_in + y_in;
-  int right_power = x_in - y_in;
+  int left_power = x_in + y_in / TURN_PRESCALAR;
+  int right_power = x_in - y_in / TURN_PRESCALAR;
 
   Set_Left_Motor(left_power);
   Set_Right_Motor(right_power);
