@@ -57,10 +57,17 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define right_motor_hbridge1_Pin GPIO_PIN_2
+#define right_motor_hbridge1_GPIO_Port GPIOA
+#define right_motor_hbridge2_Pin GPIO_PIN_3
+#define right_motor_hbridge2_GPIO_Port GPIOA
 #define IR_Receiver_Pin GPIO_PIN_7
 #define IR_Receiver_GPIO_Port GPIOA
-#define left_motor_hbridge1_Pin GPIO_PIN_3
-#define left_motor_hbridge1_GPIO_Port GPIOB
+#define IR_Receiver_EXTI_IRQn EXTI4_15_IRQn
+#define left_motor_hbridge1_Pin GPIO_PIN_15
+#define left_motor_hbridge1_GPIO_Port GPIOA
+#define left_motor_hbridge2_Pin GPIO_PIN_3
+#define left_motor_hbridge2_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 
