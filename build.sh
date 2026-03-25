@@ -17,6 +17,12 @@ TARGET="${1:-build}"
 PORT=""
 BAUD="115200"
 
+find_serial_ports() {
+    ls /dev/cu.usbserial-* /dev/cu.usbmodem* /dev/cu.SLAB_USBtoUART \
+       /dev/tty.usbserial-* /dev/tty.usbmodem* /dev/tty.SLAB_USBtoUART \
+       /dev/ttyUSB* /dev/ttyACM* 2>/dev/null || true
+}
+
 # --- Parse optional flags ----------------------------------------------------
 shift || true
 while [[ $# -gt 0 ]]; do
@@ -29,7 +35,16 @@ done
 
 # --- Auto-detect serial port if not specified --------------------------------
 if [[ -z "$PORT" ]]; then
-    PORT=$(ls /dev/tty.usbserial-* /dev/tty.SLAB_USBtoUART /dev/tty.usbmodem* 2>/dev/null | head -1)
+    PORT=$(find_serial_ports | head -1)
+fi
+
+# If caller passed /dev/tty.* on macOS, prefer the matching /dev/cu.* device.
+if [[ "$PORT" == /dev/tty.* ]]; then
+    ALT_PORT="/dev/cu.${PORT#/dev/tty.}"
+    if [[ -e "$ALT_PORT" ]]; then
+        echo "[flash] Switching to preferred callout port: $ALT_PORT"
+        PORT="$ALT_PORT"
+    fi
 fi
 
 # --- Auto-detect stm32flash --------------------------------------------------
@@ -77,13 +92,13 @@ case "$TARGET" in
             exit 1
         fi
         if [[ -z "$PORT" ]]; then
-            echo "[error] No serial port found. Specify with: ./build.sh flash -p /dev/tty.usbserial-XXXX"
+            echo "[error] No serial port found. Specify with: ./build.sh flash -p /dev/cu.usbserial-XXXX"
             exit 1
         fi
         if [[ ! -e "$PORT" ]]; then
             echo "[error] Port '$PORT' not found."
             echo "Available ports:"
-            AVAILABLE=$(ls /dev/tty.usbserial-* /dev/tty.SLAB_USBtoUART /dev/tty.usbmodem* 2>/dev/null || true)
+            AVAILABLE=$(find_serial_ports)
             if [[ -z "$AVAILABLE" ]]; then
                 echo "  (none detected)"
             else
