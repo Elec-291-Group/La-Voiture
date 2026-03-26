@@ -122,6 +122,27 @@ uint32_t adc1;
 uint32_t v_right;
 uint32_t adc9;
 uint32_t v_front;
+
+// Controller State Machine 
+typedef enum 
+{
+    STATE_CONFIG, 
+    STATE_PATH,
+    STATE_MODE,
+    STATE_DRIVE,
+    STATE_PAUSE
+} ControllerState;
+
+typedef enum
+{
+  CAR_STATE_IDLE = 0,
+  CAR_STATE_PAUSED,
+  CAR_STATE_RUNNING_AUTO,
+  CAR_STATE_RUNNING_REMOTE
+} CarState;
+
+volatile CarState car_state    = CAR_STATE_IDLE;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -201,6 +222,9 @@ int main(void)
   uart_send_line("Booting...");
   uart_send_line("USART1 ready");
   HAL_Delay(300);
+
+  ControllerState current_state = STATE_CONFIG;
+  int input = 0; // Example input variable
 
   if (!MiniMU_Init())
   {
@@ -307,11 +331,22 @@ int main(void)
       printf("OBSTACLE DETECTED! STOPPING.\r\n");
     } 
     else {
-      // PATH CLEAR: Run normal driving modes based on IR command
-      if (ir_mode == 0u) { // 0 = Auto Mode
-        path_tracking();
-      } else {             // 1 = Remote Mode
-        motor_remote_control(ir_joystick_x, ir_joystick_y);
+      // PATH CLEAR: Run behavior from top-level drive FSM state.
+      switch (car_state) {
+        case CAR_STATE_RUNNING_AUTO:
+          path_tracking();
+          break;
+
+        case CAR_STATE_RUNNING_REMOTE:
+          motor_remote_control(ir_joystick_x, ir_joystick_y);
+          break;
+
+        case CAR_STATE_IDLE:
+        case CAR_STATE_PAUSED:
+        default:
+          Set_Left_Motor(0);
+          Set_Right_Motor(0);
+          break;
       }
     }
 
@@ -547,10 +582,12 @@ void HandleCommand(uint8_t cmd_name, uint8_t data)
   {
     case IR_CMD_START:
       ir_running = 1u;
+      car_state = (ir_mode == IR_MODE_REMOTE) ? CAR_STATE_RUNNING_REMOTE : CAR_STATE_RUNNING_AUTO;
       break;
 
     case IR_CMD_PAUSE:
       ir_running = 0u;
+      car_state = CAR_STATE_PAUSED;
       Set_Left_Motor(0);
       Set_Right_Motor(0);
       break;
@@ -561,16 +598,24 @@ void HandleCommand(uint8_t cmd_name, uint8_t data)
       ir_joystick_y = 128u;
       ir_mode       = IR_MODE_AUTO;
       ir_path       = IR_PATH_1;
+      car_state     = CAR_STATE_IDLE;
       Set_Left_Motor(0);
       Set_Right_Motor(0);
       break;
 
     case IR_CMD_MODE:
-      ir_mode = data;   /* IR_MODE_AUTO or IR_MODE_REMOTE */
+      if ((data == IR_MODE_AUTO) || (data == IR_MODE_REMOTE)) {
+        ir_mode = data;   /* IR_MODE_AUTO or IR_MODE_REMOTE */
+        if (ir_running) {
+          car_state = (ir_mode == IR_MODE_REMOTE) ? CAR_STATE_RUNNING_REMOTE : CAR_STATE_RUNNING_AUTO;
+        }
+      }
       break;
 
     case IR_CMD_PATH:
-      ir_path = data;   /* IR_PATH_1 / IR_PATH_2 / IR_PATH_3 */
+      if ((data == IR_PATH_1) || (data == IR_PATH_2) || (data == IR_PATH_3)) {
+        ir_path = data;   /* IR_PATH_1 / IR_PATH_2 / IR_PATH_3 */
+      }
       break;
 
     case IR_CMD_JOYSTICK_X:
@@ -922,6 +967,10 @@ uint8_t MiniMU_CalibrateGyro(void)
 
     uart_send_line("Gyro calibration done");
     return 1;
+}
+
+void controller_State_Machine (void) {
+  
 }
 /* USER CODE END 4 */
 
