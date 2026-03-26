@@ -67,6 +67,9 @@
 //For sensor
 #define VL53L0X_I2C_ADDR 0x52 
 
+// ms it takes for the car to rotate one full circle at 60% power
+#define FULL_CIRCLE_TIME_60 4267
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -123,6 +126,14 @@ uint32_t adc1;
 uint32_t v_right;
 uint32_t adc9;
 uint32_t v_front;
+
+uint32_t intersection_encountered_time;
+uint8_t intersection_number = 0;
+enum intersection_directions path1[] = {Forward, Left, Left, Forward, Right, Left, Right, Stop};
+uint8_t front_inductor_ready = 1;
+uint32_t intersection_leave_time;
+
+// 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -138,6 +149,7 @@ void path_tracking(void);
 void handle_line_tracking(void);
 void motor_remote_control(uint8_t, uint8_t);
 void Set_Car_Speed(int speed);
+void handle_intersection_stop(void);
 
 // IMU 
 void uart_send_text(const char *s);
@@ -457,7 +469,10 @@ void path_tracking(void){
     case Intersection_turning:
       handle_intersection_turning();
       break;
-      
+
+    case Stop:
+      handle_intersection_stop();
+      break;
   }
 }
 
@@ -466,19 +481,23 @@ void handle_line_tracking(void){
   int error;
   int left_power;
   int right_power;
+  uint32_t line_tracking_current_time = HAL_GetTick();
+  if(line_tracking_current_time - intersection_leave_time > 3000){
+    front_inductor_ready = 1;
+  }
 
   error = (int)v_left - (int)v_right;
   base_power = PB - KS * abs(error);
   
   if(v_front > 700){
-    base_power = max(base_power - KF * v_front, 45);
+    base_power = fmax(base_power - KF * v_front, 45);
   }
 
   //base_power = PB;
   left_power = base_power - KP * error;
   right_power = base_power + KP * error;
 
-  if(v_front > 1000){
+  if(front_inductor_ready == 1 && v_front > 1000){
     my_tracking_states = Intersection_encountered;
   }
   else{
@@ -494,15 +513,57 @@ void handle_line_tracking(void){
 void handle_intersection_encountered(void){
   Set_Left_Motor(0);
   Set_Right_Motor(0);
+  intersection_number += 1;
   my_tracking_states = Intersection_turning;
+  intersection_encountered_time = HAL_GetTick();
+  front_inductor_ready = 0;
 }
 
 void handle_intersection_turning(void){
-  Set_Left_Motor(-45); 
-  Set_Right_Motor(45);
-  printf("intersection encountered, turning!\n");
-  printf("left: %d; right: %d; front: %d\n", v_left, v_right, v_front);
-  my_tracking_states = Intersection_turning;  
+  uint32_t intersection_turning_current_time = HAL_GetTick();
+  enum intersection_directions current_direction = path1[intersection_number-1];
+
+  switch(current_direction){
+    case Forward:
+      my_tracking_states = Running;
+      intersection_leave_time = HAL_GetTick();
+      break;
+
+    case Left:
+      if(intersection_turning_current_time - intersection_encountered_time < FULL_CIRCLE_TIME_60 / 4){
+        Set_Left_Motor(-60); 
+        Set_Right_Motor(60);
+        my_tracking_states = Intersection_turning;  
+      }
+      else{
+        my_tracking_states = Running;
+        intersection_leave_time = HAL_GetTick();
+      }
+      break;
+    
+    case Right:
+      if(intersection_turning_current_time - intersection_encountered_time < FULL_CIRCLE_TIME_60 / 4){
+        Set_Left_Motor(60); 
+        Set_Right_Motor(-60);
+        my_tracking_states = Intersection_turning;  
+      }
+      else{
+        my_tracking_states = Running;
+        intersection_leave_time = HAL_GetTick();
+      }
+      break;
+
+    case Stop:
+      my_tracking_states = Stop;
+      intersection_leave_time = HAL_GetTick();
+      break;
+  }  
+}
+
+void handle_intersection_stop(void){
+  Set_Left_Motor(0);
+  Set_Right_Motor(0);
+  my_tracking_states = Stop;
 }
 
 void motor_remote_control(uint8_t x, uint8_t y){

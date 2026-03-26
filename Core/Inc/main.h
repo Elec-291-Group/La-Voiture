@@ -74,12 +74,14 @@ enum path_tracking_states {
   Running,
   Intersection_encountered,
   Intersection_turning,
+  Intersection_stop,
 };
 
 enum intersection_directions {
   Forward,
   Left,
   Right,
+  Stop,
 };
 
 /* USER CODE END Private defines */
