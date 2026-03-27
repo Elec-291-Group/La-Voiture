@@ -211,7 +211,6 @@ void IR_Debug_Update(void)
         IR_Send_IMU(tx_reg, 0xABCD);
         tx_reg = (tx_reg + 1u) % IMU_REG_COUNT;
     }
-
     /* RX: print every frame received with addr=0x6 */
     if (ir_rx_ready) {
         ir_rx_ready = 0u;

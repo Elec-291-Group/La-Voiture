@@ -1,8 +1,8 @@
 /*
  * ir_tx.c — 28-bit pulse-distance IR transmitter
  *
- * Frame format (28 bits, MSB first):
- *   [27:24] addr=0x7  [23:8] val (16-bit)  [7:0] cmd (7–24 for IMU)
+ * Frame format (28 bits, LSB first — cmd sent first):
+ *   [7:0] cmd  [23:8] val (16-bit)  [27:24] addr=0x7  (transmitted bit 0 → bit 27)
  *
  * Unit buffer layout:
  *   Each entry represents one T-period (263 µs).
@@ -58,12 +58,12 @@ static inline void carrier_off(void)
     __HAL_TIM_SET_COMPARE(&htim22, TIM_CHANNEL_1, CARRIER_OFF_CCR);
 }
 
-/* Pack 28-bit frame word.  Layout: addr[27:24] | val[23:8] | cmd[7:0]      */
+/* Pack 28-bit frame word.  EFM8 layout: cmd[27:20] | val[19:4] | addr[3:0] */
 static uint32_t pack_frame(uint8_t cmd, uint16_t val, uint8_t addr)
 {
-    return ((uint32_t)(addr & 0xFu) << 24)
-         | ((uint32_t)(val)         <<  8)
-         | ((uint32_t)(cmd));
+    return ((uint32_t)(cmd)          << 20)
+         | ((uint32_t)(val)          <<  4)
+         | ((uint32_t)(addr & 0xFu));
 }
 
 /* Fill tx_buf[] with T-unit phases and return the count.
@@ -82,7 +82,7 @@ static uint8_t build_frame(uint32_t frame28, uint8_t *buf)
     buf[pos++] = 1u; buf[pos++] = 1u; buf[pos++] = 1u; buf[pos++] = 1u;
     buf[pos++] = 0u; buf[pos++] = 0u;
 
-    /* 28 data bits, MSB first */
+    /* 28 data bits, MSB first (cmd[7:0] then val[15:0] then addr[3:0] on wire) */
     for (int8_t b = 27; b >= 0; b--) {
         buf[pos++] = 1u;  /* 1T burst */
         uint8_t spaces = ((frame28 >> b) & 1u) ? 3u : 2u;

@@ -162,16 +162,17 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
             /* Decode: below threshold → bit 0 (3T period),
                        at/above      → bit 1 (4T period)                     */
             uint8_t bit = (f2f >= IR_F2F_THRESH_US) ? 1u : 0u;
-            rx_bits = (rx_bits << 1u) | bit;
+            rx_bits = (rx_bits << 1u) | bit;   /* MSB first, matches EFM8 TX */
             bit_cnt++;
             t_last_fall = now;
 
             if (bit_cnt == 28u) {
-                /* Full frame received — decode fields.                       */
-                uint8_t addr = (uint8_t)((rx_bits >> 24) & 0xFu);
+                /* Full frame received — decode fields (EFM8 layout).
+                 * [27:20] cmd  [19:4] val  [3:0] addr                        */
+                uint8_t addr = (uint8_t)(rx_bits & 0xFu);
                 if (addr == IR_ADDR_RX) {
-                    ir_rx_frame.cmd  = (uint8_t)( rx_bits        & 0xFFu);
-                    ir_rx_frame.val  = (uint16_t)((rx_bits >>  8) & 0xFFFFu);
+                    ir_rx_frame.cmd  = (uint8_t) ((rx_bits >> 20) & 0xFFu);
+                    ir_rx_frame.val  = (uint16_t)((rx_bits >>  4) & 0xFFFFu);
                     ir_rx_frame.addr = addr;
                     ir_rx_ready = 1u;
                 }
