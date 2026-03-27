@@ -1,19 +1,24 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-/* ── IR Protocol Configuration ───────────────────────────────────────────── */
+/* ── IR Protocol — 28-bit pulse-distance ─────────────────────────────────── */
 
-/* Expected address nibble in every valid frame */
-#define IR_ADDR             0xBu
+/* Unit period T = 263 µs (10 cycles of 38 kHz carrier)                      */
+#define IR_T_US             263u
 
-/* Command name nibble values */
-#define IR_CMD_START        0x0u
-#define IR_CMD_PAUSE        0x1u
-#define IR_CMD_RESET        0x2u
-#define IR_CMD_MODE         0x3u
-#define IR_CMD_PATH         0x4u
-#define IR_CMD_JOYSTICK_X   0x5u
-#define IR_CMD_JOYSTICK_Y   0x6u
+/* Frame addresses (4-bit nibble) */
+#define IR_ADDR_RX          0x6u   /* EFM8 → STM32  (frames we accept)       */
+#define IR_ADDR_TX          0x7u   /* STM32 → EFM8  (frames we send)         */
+
+/* Command byte values (cmd field [7:0])                                      */
+#define IR_CMD_START        0u
+#define IR_CMD_PAUSE        1u
+#define IR_CMD_RESET        2u
+#define IR_CMD_MODE         3u
+#define IR_CMD_PATH         4u
+#define IR_CMD_JOYSTICK_X   5u
+#define IR_CMD_JOYSTICK_Y   6u
+/* Commands 7–24 reserved for IMU register TX (see ir_tx.h)                  */
 
 /* Data values for IR_CMD_MODE */
 #define IR_MODE_AUTO        0x00u
@@ -24,19 +29,26 @@
 #define IR_PATH_2           0x01u
 #define IR_PATH_3           0x02u
 
-/* ── Input-Capture decoder timing ────────────────────────────────────────── */
-/* Unit period T = 263 µs (10 cycles of 38 kHz carrier) */
-#define IR_T_US             263u
+/* ── RX decoder timing (1 µs timer ticks, SYSCLK=16 MHz, PSC=15) ─────────── */
 
-/* Leader pulse: 4T burst, ±15% tolerance */
-#define IR_LEADER_MIN_US    ((4u * IR_T_US * 85u) / 100u)   /*  894 µs */
-#define IR_LEADER_MAX_US    ((4u * IR_T_US * 115u) / 100u)  /* 1209 µs */
+/* Start burst minimum width: 3.5T = 920 µs                                  */
+#define IR_LEADER_MIN_US    920u
 
-/* F2F decision threshold: 3.5T separates '0' (3T) from '1' (4T) */
-#define IR_F2F_THRESH_US    (IR_T_US * 7u / 2u)             /*  920 µs */
+/* Falling-to-falling threshold: 3.5T separates Bit-0 (3T) from Bit-1 (4T)  */
+#define IR_F2F_THRESH_US    920u
 
-/* Timeout: reset FSM if no edge arrives within 5 ms */
-#define IR_TIMEOUT_MS       5u
-#define IR_TIMEOUT_US       5000u    /* same value in µs, for ISR use */
+/* Valid interval bounds: 2T–5T */
+#define IR_F2F_MIN_US       526u   /* 2T  – anything shorter is an error      */
+#define IR_F2F_MAX_US      1315u   /* 5T  – anything longer  is an error      */
+
+/* Timeout: reset FSM if no edge for > 20 ms                                  */
+#define IR_TIMEOUT_MS       20u
+
+/* ── IMU register bank ───────────────────────────────────────────────────── */
+#define IMU_REG_COUNT       18u    /* 18 two-byte registers                   */
+#define IMU_CMD_BASE        7u     /* cmd = reg_index + IMU_CMD_BASE          */
+
+/* LSM6DS33 base register for burst read (gyro + accel + extras)             */
+#define IMU_REG_BASE        0x22u  /* OUTX_L_G; 36 consecutive bytes = 18×2  */
 
 #endif /* CONFIG_H */

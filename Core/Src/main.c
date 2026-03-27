@@ -17,11 +17,12 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <stdio.h>
 #include <string.h>
 #include <math.h>
 #include <stdlib.h>
 #include "ir_rx.h"
-#include "vl53l0x.h"
+#include "ir_tx.h"
 #include "config.h"
 /* USER CODE END Includes */
 
@@ -186,7 +187,7 @@ uint32_t last_intersection_turning_time;
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 
-// Vehicle Controls 
+void IR_Debug_Update(void);
 void Set_Left_Motor(int speed);
 void Set_Right_Motor(int speed);
 void handle_intersection_encountered(void);
@@ -343,56 +344,19 @@ int main(void)
   MX_I2C1_Init();
   MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
-  // Starting PWM generation
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);
 
-  // Initializing IMU
-  uart_send_line("");
-  uart_send_line("Booting...");
-  uart_send_line("USART1 ready");
-  HAL_Delay(300);
-
-  if (!MiniMU_Init())
-  {
-      while (1)
-      {
-          HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
-          uart_send_line("MiniMU init failed");
-          HAL_Delay(1000);
-      }
-  }
-
-  if (!MiniMU_CalibrateGyro())
-  {
-      while (1)
-      {
-          HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
-          uart_send_line("Gyro calibration failed");
-          HAL_Delay(1000);
-      }
-  }
-
-  uart_send_line("Streaming accel + gyro + angles");
-  
-  // Configure ADC channel
-  HAL_ADCEx_Calibration_Start(&hadc, ADC_SINGLE_ENDED);
-  vdda_calibration();
-
-  MX_I2C1_Init();
-  //MX_USART1_UART_Init();
-  /* USER CODE BEGIN 2 */
-  /* Configure TIM2 for a 263 µs periodic interrupt used by the IR FSM.
-     T = 10 / 38000 Hz = 263.16 µs.
-     HSI = 16 MHz → PSC = 15 → timer clock = 1 MHz → ARR = 262 → 263 µs. */
   htim6.Instance->ARR = 262u;
-  htim6.Instance->EGR = 0x01U; 
+  htim6.Instance->EGR = 0x01U;
   IR_RX_Init();
-  VL53L0X_Init();
+  MX_TIM21_Init();
+  MX_TIM22_Init();
+  IR_TX_Init();
   HAL_TIM_Base_Start_IT(&htim6);
-  /* printf("IR RX Ready\r\n"); */
+  
   reset_pose_origin();
   last_imu_update_ms = HAL_GetTick();
   last_pose_stream_ms = last_imu_update_ms;
@@ -405,45 +369,14 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-  /* LQFP32 PINOUT
-              ----------
-        VDD -|1       32|- VSS
-       PC14 -|2       31|- BOOT0
-       PC15 -|3       30|- PB7 (SDA)
-       NRST -|4       29|- PB6 (SCL)
-       VDDA -|5       28|- PB5
-  (LED) PA0 -|6       27|- PB4
-        PA1 -|7       26|- PB3
-        PA2 -|8       25|- PA15 (PWM output channel 1 of TIM2)
-        PA3 -|9       24|- PA14
-        PA4 -|10      23|- PA13
-        PA5 -|11      22|- PA12
-        PA6 -|12      21|- PA11
-        PA7 -|13      20|- PA10 (Reserved for RXD)
-        PB0 -|14      19|- PA9  (Reserved for TXD)
-        PB1 -|15      18|- PA8
-        VSS -|16      17|- VDD
-              ----------
-  */
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
     now_ms = HAL_GetTick();
     //UART_ProcessRx();
 
-    //path_tracking();
-   
-    /* ── IR FSM timeout watchdog ────────────────────────────────────────── */
-    IR_RX_Update();
+    IR_Debug_Update(); // IR debug function
 
-    /* ── Drain IR ring buffer ────────────────────────────────────────────── */
-    {
-      uint8_t cmd, dat;
-      while (IR_RX_GetFrame(&cmd, &dat)) {
-        /* printf("RAW cmd=0x%X data=%u\r\n", cmd, dat); */  /* DEBUG: remove later */
-        HandleCommand(cmd, dat);
-      }
-    }
     /* ── VL53L0X Distance Read & Collision Override ─────────────────────── */
     static uint32_t last_dist_ms = 0;
     static uint16_t current_distance = 8190; // Default to max range
@@ -625,6 +558,27 @@ void Set_Right_Motor(int speed){
 }
 
 
+/* TX addr=0x7 continuously, print any received addr=0x6 frame. */
+void IR_Debug_Update(void)
+{
+    /* TX: keep sending addr=0x7 frames every 100 ms */
+    static uint32_t last_tx_ms = 0;
+    static uint8_t  tx_reg     = 0;
+
+    if (!IR_TX_Busy() && (HAL_GetTick() - last_tx_ms) >= 100u) {
+        last_tx_ms = HAL_GetTick();
+        IR_Send_IMU(tx_reg, 0xABCD);
+        tx_reg = (tx_reg + 1u) % IMU_REG_COUNT;
+    }
+    /* RX: print every frame received with addr=0x6 */
+    if (ir_rx_ready) {
+        ir_rx_ready = 0u;
+        printf("[RX] addr=0x%X  cmd=%u  val=0x%04X\r\n",
+               ir_rx_frame.addr, ir_rx_frame.cmd, ir_rx_frame.val);
+    }
+}
+
+/* ── IR command handler ─────────────────────────────────────────────────── */
 void path_tracking(void){
   sample_guidewire_sensors();
   
@@ -989,198 +943,6 @@ void uart_send_origin(void)
     origin_sent = 1u;
 }
 
-void uart_send_pose(void)
-{
-    /* Pose telemetry formatting disabled to reduce flash usage. */
-}
-/*
-void process_uart_command(char *line)
-{
-    char *cmd;
-    char *arg1;
-    char *arg2;
-    char *arg3;
-    int index;
-    int count;
-    int x_scaled;
-    int y_scaled;
-
-    cmd = strtok(line, ",");
-    if (cmd == NULL)
-    {
-        return;
-    }
-
-    if (strcmp(cmd, "STATUS") == 0)
-    {
-        if (!origin_sent)
-        {
-            uart_send_origin();
-        }
-        uart_send_pose();
-        MiniMU_PrintScaledData();
-        MiniMU_PrintAngles();
-        return;
-    }
-
-    if (strcmp(cmd, "ZERO_YAW") == 0)
-    {
-        reset_pose_origin();
-        uart_send_origin();
-        uart_send_pose();
-        return;
-    }
-
-    if (strcmp(cmd, "PATH_BEGIN") == 0)
-    {
-        arg1 = strtok(NULL, ",");
-        count = 0;
-        if ((arg1 != NULL) && !parse_int_simple(arg1, &count))
-        {
-            count = 0;
-        }
-
-        path_count = 0u;
-        path_current_index = 0u;
-        path_loaded = 0u;
-        path_ready = 0u;
-        path_receiving = 1u;
-        motor_test_active = 0u;
-        current_drive_cmd = 0;
-        Set_Left_Motor(0);
-        Set_Right_Motor(0);
-
-        if (count > (int)PATH_MAX_WAYPOINTS)
-        {
-            count = (int)PATH_MAX_WAYPOINTS;
-        }
-
-        (void)count;
-        uart_send_line("PATH_ACK,BEGIN");
-        return;
-    }
-
-    if (strcmp(cmd, "WPT") == 0)
-    {
-        if (!path_receiving)
-        {
-            return;
-        }
-
-        arg1 = strtok(NULL, ",");
-        arg2 = strtok(NULL, ",");
-        arg3 = strtok(NULL, ",");
-
-        if ((arg1 == NULL) || (arg2 == NULL) || (arg3 == NULL))
-        {
-            return;
-        }
-
-        if (!parse_int_simple(arg1, &index))
-        {
-            return;
-        }
-
-        if (!parse_int_simple(arg2, &x_scaled) || !parse_int_simple(arg3, &y_scaled))
-        {
-            return;
-        }
-
-        if ((index >= 0) && (index < (int)PATH_MAX_WAYPOINTS))
-        {
-            path_x[index] = (float)x_scaled / 100.0f;
-            path_y[index] = (float)y_scaled / 100.0f;
-
-            if ((uint8_t)(index + 1) > path_count)
-            {
-                path_count = (uint8_t)(index + 1);
-            }
-        }
-        return;
-    }
-
-    if (strcmp(cmd, "PATH_END") == 0)
-    {
-        path_receiving = 0u;
-        path_current_index = 0u;
-        path_loaded = (path_count > 0u) ? 1u : 0u;
-        path_ready = 0u;
-        uart_send_line(path_loaded ? "PATH_ACK,LOADED" : "PATH_ACK,EMPTY");
-        return;
-    }
-
-    if ((strcmp(cmd, "START") == 0) || (strcmp(cmd, "TRACK_ON") == 0))
-    {
-        if (path_receiving)
-        {
-            uart_send_line("TRACK_ACK,BUSY");
-            return;
-        }
-
-        if (!path_loaded || (path_count == 0u))
-        {
-            uart_send_line("TRACK_ACK,NO_PATH");
-            return;
-        }
-
-        path_current_index = 0u;
-        path_ready = 1u;
-        motor_test_active = 0u;
-        uart_send_line("TRACK_ACK,ON");
-        return;
-    }
-
-    if (strcmp(cmd, "MOTOR_TEST") == 0)
-    {
-        path_ready = 0u;
-        path_receiving = 0u;
-        motor_test_active = 1u;
-        current_drive_cmd = 0;
-        Set_Left_Motor(MOTOR_TEST_SPEED);
-        Set_Right_Motor(MOTOR_TEST_SPEED);
-        uart_send_line("MOTOR_ACK,ON");
-        return;
-    }
-
-    if (strcmp(cmd, "TRACK_OFF") == 0)
-    {
-        uint8_t was_motor_test = motor_test_active;
-
-        motor_test_active = 0u;
-        ir_running = 0u;
-        path_ready = 0u;
-        current_drive_cmd = 0;
-        Set_Left_Motor(0);
-        Set_Right_Motor(0);
-        uart_send_line(was_motor_test ? "MOTOR_ACK,OFF" : "TRACK_ACK,OFF");
-        return;
-    }
-}
-*/
-/*
-void UART_ProcessRx(void)
-{
-    uint16_t pending_len;
-
-    if (!rx_line_ready)
-    {
-        return;
-    }
-
-    __disable_irq();
-    pending_len = rx_pending_len;
-    rx_line_ready = 0u;
-    __enable_irq();
-
-    if (pending_len == 0u)
-    {
-        return;
-    }
-
-    rx_pending_buf[pending_len] = 0u;
-    process_uart_command((char *)rx_pending_buf);
-}
-*/
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     uint16_t i;

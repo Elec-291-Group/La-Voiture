@@ -68,6 +68,8 @@ void Error_Handler(void);
 #define left_motor_hbridge1_GPIO_Port GPIOA
 #define left_motor_hbridge2_Pin GPIO_PIN_3
 #define left_motor_hbridge2_GPIO_Port GPIOB
+#define IR_Transmit_Pin GPIO_PIN_6
+#define IR_Transmit_GPIO_Port GPIOA
 
 /* USER CODE BEGIN Private defines */
 enum path_tracking_states {
