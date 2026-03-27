@@ -157,9 +157,12 @@ uint8_t motor_test_active = 0u;
 enum path_tracking_states my_tracking_states = Running;
 volatile uint8_t ir_joystick_x = IR_JOYSTICK_CENTER_X;
 volatile uint8_t ir_joystick_y = IR_JOYSTICK_CENTER_Y;
-volatile uint8_t ir_mode       = 0u;     /* 0 = auto, 1 = remote */
-volatile uint8_t ir_running    = 0u;     /* 1 after start, 0 after pause/reset */
-volatile uint8_t ir_path       = 0u;
+
+
+volatile uint8_t ir_mode       = 0u;     
+volatile uint8_t ir_running    = 0u;    
+volatile uint8_t ir_path       = 0u;   
+volatile uint8_t ir_reset      = 0u; 
 
 // Inductor readings
 uint16_t adc0;
@@ -180,7 +183,30 @@ uint8_t front_inductor_ready = 1;
 uint32_t intersection_leave_time;
 uint32_t last_intersection_turning_time;
 
-// 
+// Time
+uint32_t now_ms;
+float dt_s;
+
+// Controller State Machine 
+typedef enum 
+{
+  STATE_CONFIG, 
+  STATE_DRIVE,
+  STATE_PAUSE
+} ControllerState;
+
+// belongs to DRIVE state in ControllerState
+typedef enum
+{
+  STATE_FIELD_TRACKING,
+  STATE_REMOTE,
+  STATE_PATH_TRACKING
+} CarState;
+
+ControllerState controller_state = STATE_CONFIG;
+CarState car_state = STATE_FIELD_TRACKING;
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -203,10 +229,7 @@ void uart_send_text(const char *s);
 void uart_send_line(const char *s);
 void uart_send_uint32(uint32_t value);
 void uart_send_path_tracking_debug(void);
-void uart_send_pose(void);
 void uart_send_origin(void);
-void UART_StartRxIT(void);
-void UART_ProcessRx(void);
 // void process_uart_command(char *line);
 void process_pathfinder_control(float dt_s);
 void sample_guidewire_sensors(void);
@@ -232,6 +255,12 @@ void MiniMU_UpdateAngles(void);
 void MiniMU_PrintScaledData(void);
 void MiniMU_PrintAngles(void);
 uint8_t MiniMU_CalibrateGyro(void);
+
+void IMUUpdate(void); //MAIN IMU FUNCTION
+
+// State Machine Functions
+void ControllerStateMachine(void);
+void CarStateMachine(void);
 
 /* USER CODE END PFP */
 
@@ -323,9 +352,6 @@ void reset_pose_origin(void)
 
 int main(void)
 {
-  uint32_t now_ms;
-  float dt_s;
-
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -373,19 +399,15 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     now_ms = HAL_GetTick();
-    //UART_ProcessRx();
-
     IR_Debug_Update(); // IR debug function
-
-    /* ── VL53L0X Distance Read & Collision Override ─────────────────────── */
+    /*--------------------------------------------------------------------------*/
+    // Collision Detection
+    /*--------------------------------------------------------------------------*/
     static uint32_t last_dist_ms = 0;
     static uint16_t current_distance = 8190; // Default to max range
 
-    //path_tracking(dt_s);
-
     if (HAL_GetTick() - last_dist_ms >= 100u) {
       last_dist_ms = HAL_GetTick();
-      
       uint16_t reading = VL53L0X_ReadDistance();
       if (reading != 0xFFFFu) { // 0xFFFF means error or sensor not ready
           current_distance = reading;
@@ -394,82 +416,17 @@ int main(void)
       }
     }
 
-    /* 3. COLLISION DETECTION OVERRIDE */
-    if (current_distance < 100) { 
-      // EMERGENCY STOP: If bject is closer than 10cm
+    if (current_distance < 100u)
+    {
       Set_Left_Motor(0);
       Set_Right_Motor(0);
-      /* printf("obstacle.\r\n"); */
-    } 
-    else {
-      // PATH CLEAR: Run normal driving modes based on IR command
-      if (ir_mode == 0u) { // 0 = Auto Mode
-        path_tracking();
-      } else {             // 1 = Remote Mode
-        motor_remote_control(ir_joystick_x, ir_joystick_y);
-      }
-    }
-
-  /* USER CODE END 3 */
-
-    //motor_remote_control(ir_joystick_x, ir_joystick_y);
-    /*
-    if (motor_test_active)
-    {
       current_drive_cmd = 0;
-      Set_Left_Motor(MOTOR_TEST_SPEED);
-      Set_Right_Motor(MOTOR_TEST_SPEED);
-    }
-    else if (path_ready)
-    {
-      process_pathfinder_control((float)(now_ms - last_imu_update_ms) / 1000.0f);
-    }
-    else if (ir_running && (ir_mode == IR_MODE_REMOTE))
-    {
-      current_drive_cmd = 0;
-      motor_remote_control(ir_joystick_x, ir_joystick_y);
     }
     else
     {
-      current_drive_cmd = 0;
-      Set_Left_Motor(0);
-      Set_Right_Motor(0);
+      ControllerStateMachine();
     }
-
-    if ((now_ms - last_guidewire_sample_ms) >= GUIDEWIRE_SAMPLE_PERIOD_MS)
-    {
-      last_guidewire_sample_ms = now_ms;
-      sample_guidewire_sensors();
-      update_guidewire_origin_reference();
-    }
-    */
-    /* ── Print joystick values every loop ───────────────────────────────── */
-    //printf("X=%3u Y=%3u\r\n", ir_joystick_x, ir_joystick_y);
-
-    
-    if ((now_ms - last_imu_update_ms) >= IMU_UPDATE_PERIOD_MS)
-    {
-      dt_s = (float)(now_ms - last_imu_update_ms) / 1000.0f;
-      last_imu_update_ms = now_ms;
-
-      if (!MiniMU_ReadGyro()) {}
-      else if (!MiniMU_ReadAccel()) {}
-      else
-      {
-        MiniMU_UpdateScaled();
-        MiniMU_UpdateAngles();
-
-        yaw_deg = wrap_angle_deg(yaw_deg + gz_dps * dt_s);
-        pose_x_cm += ((float)current_drive_cmd * DRIVE_SPEED_SCALE_CM_S * dt_s) * cosf((yaw_deg - yaw_zero_deg) / RAD_TO_DEG);
-        pose_y_cm += ((float)current_drive_cmd * DRIVE_SPEED_SCALE_CM_S * dt_s) * sinf((yaw_deg - yaw_zero_deg) / RAD_TO_DEG);
-      }
-    }
-
-    if ((now_ms - last_pose_stream_ms) >= POSE_STREAM_PERIOD_MS)
-    {
-      last_pose_stream_ms = now_ms;
-      /* Serial debug mode: suppress periodic origin/pose telemetry. */
-    }
+    /*--------------------------------------------------------------------------*/
   /* USER CODE END 3 */
   }
   /* USER CODE END WHILE */
@@ -814,8 +771,6 @@ void HandleCommand(uint8_t cmd_name, uint8_t data)
       motor_test_active = 0u;
       ir_running = 0u;
       path_ready = 0u;
-      Set_Left_Motor(0);
-      Set_Right_Motor(0);
       break;
 
     case IR_CMD_RESET:
@@ -824,14 +779,12 @@ void HandleCommand(uint8_t cmd_name, uint8_t data)
       path_ready    = 0u;
       ir_joystick_x = IR_JOYSTICK_CENTER_X;
       ir_joystick_y = IR_JOYSTICK_CENTER_Y;
-      ir_mode       = IR_MODE_AUTO;
+      ir_mode       = IR_MODE_FIELD;
       ir_path       = IR_PATH_1;
-      Set_Left_Motor(0);
-      Set_Right_Motor(0);
       break;
 
     case IR_CMD_MODE:
-      ir_mode = data;   /* IR_MODE_AUTO or IR_MODE_REMOTE */
+      ir_mode = data;   /* IR_MODE_FIELD / IR_MODE_REMOTE / IR_MODE_PATH */
       break;
 
     case IR_CMD_PATH:
@@ -1244,6 +1197,125 @@ uint8_t MiniMU_CalibrateGyro(void)
 
     return 1;
 }
+
+void IMUUpdate(void)
+{
+  if ((now_ms - last_imu_update_ms) >= IMU_UPDATE_PERIOD_MS)
+    {
+      dt_s = (float)(now_ms - last_imu_update_ms) / 1000.0f;
+      last_imu_update_ms = now_ms;
+
+      if (!MiniMU_ReadGyro()) {}
+      else if (!MiniMU_ReadAccel()) {}
+      else
+      {
+        MiniMU_UpdateScaled();
+        MiniMU_UpdateAngles();
+
+        yaw_deg = wrap_angle_deg(yaw_deg + gz_dps * dt_s);
+        pose_x_cm += ((float)current_drive_cmd * DRIVE_SPEED_SCALE_CM_S * dt_s) * cosf((yaw_deg - yaw_zero_deg) / RAD_TO_DEG);
+        pose_y_cm += ((float)current_drive_cmd * DRIVE_SPEED_SCALE_CM_S * dt_s) * sinf((yaw_deg - yaw_zero_deg) / RAD_TO_DEG);
+      }
+    }
+
+    if ((now_ms - last_pose_stream_ms) >= POSE_STREAM_PERIOD_MS)
+    {
+      last_pose_stream_ms = now_ms;
+      /* Serial debug mode: suppress periodic origin/pose telemetry. */
+    }
+}
+// MAIN CONTROLLER STATE MACHINE
+void ControllerStateMachine(void) 
+{
+  switch (controller_state) 
+  {
+    case STATE_CONFIG:
+      current_drive_cmd = 0;
+      ir_reset = 0;
+      Set_Left_Motor(0);
+      Set_Right_Motor(0);
+      if (ir_running)
+      {
+        controller_state = STATE_DRIVE;
+      }
+      break;
+
+    case STATE_DRIVE:
+      IMUUpdate();
+      if (!ir_running)
+      {
+        controller_state = STATE_PAUSE;
+      }
+      else
+      {
+        
+        CarStateMachine();
+      }
+      break;
+
+    case STATE_PAUSE:
+      current_drive_cmd = 0;
+      Set_Left_Motor(0);
+      Set_Right_Motor(0);
+      IMUUpdate();
+      if (ir_running)
+      {
+        controller_state = STATE_DRIVE;
+      }
+      else if (ir_reset)
+      {
+        controller_state = STATE_CONFIG;
+      }
+      break;
+
+    default:
+      controller_state = STATE_CONFIG;
+      break;
+  }
+}
+
+void CarStateMachine(void) 
+{
+  if (ir_mode == IR_MODE_FIELD)
+  {
+    car_state = STATE_FIELD_TRACKING;
+  }
+  else if (ir_mode == IR_MODE_REMOTE)
+  {
+    car_state = STATE_REMOTE;
+  }
+  else if (ir_mode == IR_MODE_PATH)
+  {
+    car_state = STATE_PATH_TRACKING;
+  }
+  else
+  {
+    car_state = STATE_FIELD_TRACKING;
+  }
+
+  switch (car_state)
+  {
+    case STATE_FIELD_TRACKING:
+      path_tracking();
+      break;
+
+    case STATE_REMOTE:
+      motor_remote_control(ir_joystick_x, ir_joystick_y);
+      break;
+
+    case STATE_PATH_TRACKING:
+      process_pathfinder_control((float)(HAL_GetTick() - last_imu_update_ms) / 1000.0f);
+      break;
+
+    default:
+      current_drive_cmd = 0;
+      Set_Left_Motor(0);
+      Set_Right_Motor(0);
+      car_state = STATE_FIELD_TRACKING;
+      break;
+  }
+}
+
 /* USER CODE END 4 */
 
 void Error_Handler(void)

@@ -21,8 +21,9 @@
 /* Commands 7–24 reserved for IMU register TX (see ir_tx.h)                  */
 
 /* Data values for IR_CMD_MODE */
-#define IR_MODE_AUTO        0x00u
+#define IR_MODE_FIELD       0x00u
 #define IR_MODE_REMOTE      0x01u
+#define IR_MODE_PATH        0x02u
 
 /* Data values for IR_CMD_PATH */
 #define IR_PATH_1           0x00u
