@@ -51,3 +51,4 @@
 #define GUIDEWIRE_BALANCE_TOLERANCE_MV   150u
 #define GUIDEWIRE_LOCK_SAMPLES_REQUIRED    5u
 #define GUIDEWIRE_SAMPLE_PERIOD_MS        20u
+#define PATH_CMD_BASE                      7u  /* cmd = waypoint_index + PATH_CMD_BASE (7..38) */

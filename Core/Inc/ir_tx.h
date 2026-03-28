@@ -29,6 +29,12 @@ void IR_TX_Init(void);
    Safe to call only when IR_TX_Busy() == 0.                               */
 void IR_Send_IMU(uint8_t reg_index, uint16_t val);
 
+/* Send an arbitrary cmd+val frame (addr always IR_ADDR_TX = 0x7).
+   Safe to call only when IR_TX_Busy() == 0.                               */
+void IR_Send_Cmd(uint8_t cmd, uint16_t val);
+
+#define IR_CMD_WAYPOINTS_ARRIVED  0x00u  /* cmd=0x00, val=0x0000            */
+
 /* Returns 1 while a transmission is in progress, 0 when idle.             */
 uint8_t IR_TX_Busy(void);
 

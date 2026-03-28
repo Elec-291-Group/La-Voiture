@@ -96,8 +96,8 @@ volatile uint8_t rx_line_ready = 0u;
 uint8_t uart_rx_byte = 0u;
 
 // path tracking variables
-float path_x[PATH_MAX_WAYPOINTS];
-float path_y[PATH_MAX_WAYPOINTS];
+uint8_t path_x[PATH_MAX_WAYPOINTS];
+uint8_t path_y[PATH_MAX_WAYPOINTS];
 uint8_t path_count = 0u;
 uint8_t path_current_index = 0u;
 uint8_t path_receiving = 0u;
@@ -1352,6 +1352,21 @@ void HandleCommand(uint8_t cmd_name, uint16_t val)
       break;
 
     default:
+      /* path waypoint: cmd = PATH_CMD_BASE + index (7..38) */
+      if (cmd_name >= PATH_CMD_BASE && cmd_name < PATH_CMD_BASE + PATH_MAX_WAYPOINTS)
+      {
+        uint8_t idx = cmd_name - PATH_CMD_BASE;
+        path_x[idx] = (uint8_t)((val >> 8) & 0xFFu);  /* high byte = x_cm */
+        path_y[idx] = (uint8_t)(val & 0xFFu);           /* low byte  = y_cm */
+        if (idx + 1u > path_count)
+        {
+          path_count = idx + 1u;
+        }
+        if (!IR_TX_Busy())
+        {
+          IR_Send_Cmd(IR_CMD_WAYPOINTS_ARRIVED, 0x0000u);
+        }
+      }
       break;
   }
 }
