@@ -530,8 +530,9 @@ int main(void)
     if (ir_rx_ready) {
         ir_rx_ready = 0u;
         HandleCommand(ir_rx_frame.cmd, ir_rx_frame.val);
+        printf("%u %u\n", ir_rx_frame.cmd, ir_rx_frame.val);
     }
-
+    /*
     if (rx_line_ready)
     {
         char line_buf[sizeof(rx_pending_buf)];
@@ -552,7 +553,7 @@ int main(void)
         rx_line_ready = 0u;
         process_uart_command(line_buf);
     }
-
+    */
     IR_RX_Update();
 
     /*--------------------------------------------------------------------------*/
@@ -670,19 +671,12 @@ void Set_Right_Motor(int speed){
   }
 }
 
-
 /* TX addr=0x7 continuously, print any received addr=0x6 frame. */
 void IR_Debug_Update(void)
 {
-    /* RX: decode every received frame and dispatch to HandleCommand */
-    if (ir_rx_ready) {
-        ir_rx_ready = 0u;
-        /* RX debug print intentionally disabled to save flash. */
-        HandleCommand(ir_rx_frame.cmd, ir_rx_frame.val);
-    }
+
 }
 
-/* ── IR command handler ─────────────────────────────────────────────────── */
 void path_tracking(void){
   sample_guidewire_sensors();
   //printf("%d\n", my_tracking_states);
@@ -811,6 +805,20 @@ void handle_intersection_encountered(void){
   //last_intersection_turning_time = HAL_GetTick();
   //intersection_turn_current_yaw_angle = 0;
   //front_inductor_ready = 0;
+
+  /* Send crossing action over IR: look up direction for this intersection */
+  if (!IR_TX_Busy())
+  {
+    enum intersection_directions dir;
+    switch (ir_path)
+    {
+      case IR_PATH_1: dir = path1[intersection_number - 1]; break;
+      case IR_PATH_2: dir = path2[intersection_number - 1]; break;
+      case IR_PATH_3: dir = path3[intersection_number - 1]; break;
+      default:        dir = path1[intersection_number - 1]; break;
+    }
+    IR_Send_Cmd(IR_CMD_CROSSING_ACTION, (uint16_t)dir);
+  }
 }
 
 void handle_intersection_compensation(void){
@@ -1163,7 +1171,7 @@ void process_pathfinder_control(float dt_s)
 
     Set_Left_Motor(left_cmd);
     Set_Right_Motor(right_cmd);
-
+/* debug log
     if ((HAL_GetTick() - last_path_control_debug_ms) >= 200u)
     {
         last_path_control_debug_ms = HAL_GetTick();
@@ -1178,7 +1186,7 @@ void process_pathfinder_control(float dt_s)
         printf("[PATH_CTRL] drive=%d scaled=%d left=%d right=%d\r\n",
                drive_cmd, current_drive_cmd, left_cmd, right_cmd);
     }
-
+*/
     (void)dt_s;
 }
 
@@ -1495,10 +1503,18 @@ void HandleCommand(uint8_t cmd_name, uint16_t val)
 
     case IR_CMD_MODE:
       ir_mode = val;
+      if (controller_state == STATE_CONFIG && !IR_TX_Busy())
+      {
+        IR_Send_Cmd(IR_CMD_DATA_RECEIVED, (uint16_t)ir_mode);
+      }
       break;
 
     case IR_CMD_PATH:
       ir_path = val;
+      if (controller_state == STATE_CONFIG && !IR_TX_Busy())
+      {
+        IR_Send_Cmd(IR_CMD_DATA_RECEIVED, (uint16_t)ir_mode);
+      }
       break;
 
     case IR_CMD_JOYSTICK_X:
@@ -1522,7 +1538,7 @@ void HandleCommand(uint8_t cmd_name, uint16_t val)
         }
         if (!IR_TX_Busy() && (path_x[idx] != 0u || path_y[idx] != 0u))
         {
-          IR_Send_Cmd(IR_CMD_WAYPOINTS_ARRIVED, 0x0000u);
+          IR_Send_Cmd(IR_CMD_DATA_RECEIVED, (uint16_t)ir_mode);
         }
       }
       break;

@@ -33,7 +33,8 @@ void IR_Send_IMU(uint8_t reg_index, uint16_t val);
    Safe to call only when IR_TX_Busy() == 0.                               */
 void IR_Send_Cmd(uint8_t cmd, uint16_t val);
 
-#define IR_CMD_WAYPOINTS_ARRIVED  0x00u  /* cmd=0x00, val=0x0000            */
+#define IR_CMD_DATA_RECEIVED      0x00u  /* cmd=0, val=mode (0x00/0x01/0x02)*/
+#define IR_CMD_CROSSING_ACTION    0x01u  /* cmd=1, val=direction action     */
 
 /* Returns 1 while a transmission is in progress, 0 when idle.             */
 uint8_t IR_TX_Busy(void);
