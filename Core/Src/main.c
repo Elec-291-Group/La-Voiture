@@ -25,6 +25,7 @@
 #include "ir_tx.h"
 #include "config.h"
 #include "datatypes.h"
+#include "vl53l0x.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -82,7 +83,6 @@ static int current_right_motor_cmd = 0;
 static int current_drive_cmd = 0;
 static uint32_t last_imu_update_ms = 0u;
 static uint32_t last_pose_stream_ms = 0u;
-static uint32_t last_motor_debug_ms = 0u;
 static uint8_t origin_sent = 0u;
 static uint32_t last_guidewire_sample_ms = 0u;
 static uint8_t guidewire_origin_locked = 0u;
@@ -183,6 +183,7 @@ void uart_send_text(const char *s);
 void uart_send_line(const char *s);
 void uart_send_uint32(uint32_t value);
 void uart_send_path_tracking_debug(void);
+void uart_send_pose(void);
 void uart_send_origin(void);
 // void process_uart_command(char *line);
 void process_pathfinder_control(float dt_s);
@@ -215,6 +216,7 @@ void IMUUpdate(void); //MAIN IMU FUNCTION
 // State Machine Functions
 void ControllerStateMachine(void);
 void CarStateMachine(void);
+void HandleCommand(uint8_t cmd_name, uint16_t val);
 
 /* USER CODE END PFP */
 
@@ -329,6 +331,20 @@ int main(void)
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);
 
+  reset_pose_origin();
+  last_imu_update_ms = HAL_GetTick();
+  last_pose_stream_ms = last_imu_update_ms;
+  last_guidewire_sample_ms = last_imu_update_ms;
+  uart_send_origin();
+
+  // Configure ADC channel
+  HAL_ADCEx_Calibration_Start(&hadc, ADC_SINGLE_ENDED);
+  vdda_calibration();
+
+  // i2c init
+  VL53L0X_Init();
+
+  // IR init
   htim6.Instance->ARR = 262u;
   htim6.Instance->EGR = 0x01U;
   IR_RX_Init();
@@ -337,12 +353,35 @@ int main(void)
   IR_TX_Init();
   HAL_TIM_Base_Start_IT(&htim6);
   
+  // IMU init
+  if (!MiniMU_Init())
+  {
+      while (1)
+      {
+          HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
+          uart_send_line("MiniMU init failed");
+          HAL_Delay(1000);
+      }
+  }
+
+  if (!MiniMU_CalibrateGyro())
+  {
+      while (1)
+      {
+          HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
+          uart_send_line("Gyro calibration failed");
+          HAL_Delay(1000);
+      }
+  }
+
+  uart_send_line("Streaming accel + gyro + angles");
+
   reset_pose_origin();
   last_imu_update_ms = HAL_GetTick();
   last_pose_stream_ms = last_imu_update_ms;
   last_guidewire_sample_ms = last_imu_update_ms;
   uart_send_origin();
-  
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -488,16 +527,6 @@ void Set_Right_Motor(int speed){
 /* TX addr=0x7 continuously, print any received addr=0x6 frame. */
 void IR_Debug_Update(void)
 {
-    /* TX: keep sending addr=0x7 frames every 100 ms */
-    static uint32_t last_tx_ms = 0;
-    static uint8_t  tx_reg     = 0;
-/*
-    if (!IR_TX_Busy() && (HAL_GetTick() - last_tx_ms) >= 100u) {
-        last_tx_ms = HAL_GetTick();
-        IR_Send_IMU(tx_reg, 0xABCD);
-        tx_reg = (tx_reg + 1u) % IMU_REG_COUNT;
-    }
-*/
     /* RX: decode every received frame and dispatch to HandleCommand */
     if (ir_rx_ready) {
         ir_rx_ready = 0u;
