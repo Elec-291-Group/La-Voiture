@@ -47,6 +47,7 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     Core/Src/ir_rx.c
+    Core/Src/ir_tx.c
     Core/Src/vl53l0x.c
 )
 
