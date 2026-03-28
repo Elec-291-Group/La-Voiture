@@ -105,12 +105,12 @@ uint8_t path_loaded = 0u;
 
 // Vehicle Control 
 enum path_tracking_states my_tracking_states = Running;
-volatile uint8_t ir_joystick_x = IR_JOYSTICK_CENTER_X;
-volatile uint8_t ir_joystick_y = IR_JOYSTICK_CENTER_Y;
+volatile uint16_t ir_joystick_x = IR_JOYSTICK_CENTER_X;
+volatile uint16_t ir_joystick_y = IR_JOYSTICK_CENTER_Y;
 
-volatile uint8_t ir_mode       = 0u;     
-volatile uint8_t ir_running    = 0u;    
-volatile uint8_t ir_path       = 0u;   
+volatile uint16_t ir_mode      = 0u;
+volatile uint8_t  ir_running   = 0u;
+volatile uint16_t ir_path      = 0u;
 volatile uint8_t ir_reset      = 0u; 
 
 // Inductor readings
@@ -172,7 +172,7 @@ void handle_intersection_encountered(void);
 void handle_intersection_turning(void);
 void path_tracking(void);
 void handle_line_tracking(void);
-void motor_remote_control(uint8_t, uint8_t);
+void motor_remote_control(uint16_t, uint16_t);
 void Set_Car_Speed(int speed);
 void handle_intersection_stop(void);
 void handle_intersection_compensation(void);
@@ -359,6 +359,16 @@ int main(void)
         HandleCommand(ir_rx_frame.cmd, ir_rx_frame.val);
     }
     IR_RX_Update();
+
+    static uint32_t last_state_print_ms = 0;
+    if (now_ms - last_state_print_ms >= 500u) {
+        last_state_print_ms = now_ms;
+        const char *ctrl_str = (controller_state == STATE_CONFIG) ? "CONFIG" :
+                               (controller_state == STATE_DRIVE)  ? "DRIVE"  : "PAUSE";
+        const char *car_str  = (car_state == STATE_FIELD_TRACKING)  ? "FIELD" :
+                               (car_state == STATE_REMOTE)           ? "REMOTE" : "PATH";
+        printf("[STATE] ctrl=%s  car=%s\r\n", ctrl_str, car_str);
+    }
     /*--------------------------------------------------------------------------*/
     // Collision Detection
     /*--------------------------------------------------------------------------*/
@@ -368,11 +378,12 @@ int main(void)
     if (HAL_GetTick() - last_dist_ms >= 100u) {
       last_dist_ms = HAL_GetTick();
       uint16_t reading = VL53L0X_ReadDistance();
-      if (reading != 0xFFFFu) { // 0xFFFF means error or sensor not ready
+      if (reading != 0xFFFFu) {
           current_distance = reading;
       } else {
-          current_distance = 8190; // Default to max range on error i think
+          current_distance = 8190;
       }
+      printf("[DIST] raw=%u  used=%u\r\n", reading, current_distance);
     }
 
     if (current_distance < 100u)
@@ -499,6 +510,7 @@ void IR_Debug_Update(void)
 /* ── IR command handler ─────────────────────────────────────────────────── */
 void path_tracking(void){
   sample_guidewire_sensors();
+  printf("%d\n", my_tracking_states);
   
   switch(my_tracking_states){
     case Running:
@@ -726,20 +738,20 @@ void handle_intersection_stop(void){
   my_tracking_states = Intersection_stop;
 }
 
-void motor_remote_control(uint8_t x, uint8_t y){
+void motor_remote_control(uint16_t x, uint16_t y){
   int x_in;
   int y_in;
   int left_power;
   int right_power;
-  
-  if(x >= 165){
+
+  if(x >= 165u){
     x_in = (((int)x - 165) * 100) / 90;
   }
   else{
     x_in = (((int)x - 165) * 100) / 165;
   }
-  
-  if(y >= 170){
+
+  if(y >= 170u){
     y_in = (((int)y - 170) * 100) / 85;
   }
   else{
@@ -798,6 +810,12 @@ void Set_Car_Speed(int speed){
     __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, (-speed) * 10); 
     __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, (-speed) * 10);
   }
+}
+
+int __io_putchar(int ch)
+{
+    HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1u, HAL_MAX_DELAY);
+    return ch;
 }
 
 void uart_send_text(const char *s)
@@ -1198,8 +1216,7 @@ void ControllerStateMachine(void)
         controller_state = STATE_PAUSE;
       }
       else
-      {
-        
+      { 
         CarStateMachine();
       }
       break;
@@ -1290,19 +1307,19 @@ void HandleCommand(uint8_t cmd_name, uint16_t val)
       break;
 
     case IR_CMD_MODE:
-      ir_mode = (uint8_t)val;   /* IR_MODE_FIELD / IR_MODE_REMOTE / IR_MODE_PATH */
+      ir_mode = val;
       break;
 
     case IR_CMD_PATH:
-      ir_path = (uint8_t)val;   /* IR_PATH_1 / IR_PATH_2 / IR_PATH_3 */
+      ir_path = val;
       break;
 
     case IR_CMD_JOYSTICK_X:
-      ir_joystick_x = (uint8_t)val;
+      ir_joystick_x = val;
       break;
 
     case IR_CMD_JOYSTICK_Y:
-      ir_joystick_y = (uint8_t)val;
+      ir_joystick_y = val;
       break;
 
     default:
