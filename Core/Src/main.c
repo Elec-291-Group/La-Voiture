@@ -17,6 +17,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <stdio.h>
 #include <string.h>
 #include <math.h>
 #include <stdlib.h>
@@ -48,6 +49,7 @@
 #define LSM6DS33_WHO_AM_I_VAL     0x69
 
 // IMU Values
+#define ACCEL_SENS_G_PER_LSB      0.000061f
 #define GYRO_SENS_DPS_PER_LSB     0.00875f
 
 #define GYRO_CAL_SAMPLES          200
@@ -55,33 +57,18 @@
 
 // Vehicle Control 
 // needed to be tuned !!!
-#define KP 0.020f
+#define KP 0.02f
 #define KS 0.015f
 #define KF 0.025f // decrease speed before approaching the intersection
 //-------- base power of motor in auto mode -----------------
 #define PB 65
-#define STOP_VF 1500
+#define TURN_PRESCALAR 2 // power prescalar to reduce turn speed
 
 //For sensor
 #define VL53L0X_I2C_ADDR 0x52 
 
 // ms it takes for the car to rotate one full circle at 60% power
-#define IMU_UPDATE_PERIOD_MS      20u
-#define POSE_STREAM_PERIOD_MS     100u
-#define PATH_MAX_WAYPOINTS        32u
-#define PATH_REACHED_TOLERANCE_CM 8.0f
-#define DRIVE_SPEED_SCALE_CM_S    0.35f
-#define PATH_FORWARD_SPEED        40
-#define PATH_APPROACH_SPEED       25
-#define PATH_STEER_GAIN           1.0f
-#define PATH_MAX_STEER_CMD        55
-#define MOTOR_TEST_SPEED          40
-#define IR_JOYSTICK_CENTER_X      165u
-#define IR_JOYSTICK_CENTER_Y      170u
-#define GUIDEWIRE_FRONT_THRESHOLD_MV    1000u
-#define GUIDEWIRE_BALANCE_TOLERANCE_MV   150u
-#define GUIDEWIRE_LOCK_SAMPLES_REQUIRED    5u
-#define GUIDEWIRE_SAMPLE_PERIOD_MS        20u
+#define FULL_CIRCLE_TIME_60 4267
 
 /* USER CODE END PD */
 
@@ -120,64 +107,31 @@ static float gz_bias = 0.0f;
 
 static float roll_deg = 0.0f;
 static float pitch_deg = 0.0f;
-static float yaw_deg = 0.0f;
-static float yaw_zero_deg = 0.0f;
 
-static float pose_x_cm = 0.0f;
-static float pose_y_cm = 0.0f;
-static int current_left_motor_cmd = 0;
-static int current_right_motor_cmd = 0;
-static int current_drive_cmd = 0;
-static uint32_t last_imu_update_ms = 0u;
-static uint32_t last_pose_stream_ms = 0u;
-static uint32_t last_motor_debug_ms = 0u;
-static uint8_t origin_sent = 0u;
-static uint32_t last_guidewire_sample_ms = 0u;
-static uint8_t guidewire_origin_locked = 0u;
-static uint8_t guidewire_lock_streak = 0u;
-
-uint8_t rx_line_buf[96];
-uint16_t rx_line_len = 0u;
-uint8_t rx_pending_buf[96];
-volatile uint16_t rx_pending_len = 0u;
-volatile uint8_t rx_line_ready = 0u;
-uint8_t uart_rx_byte = 0u;
-
-float path_x[PATH_MAX_WAYPOINTS];
-float path_y[PATH_MAX_WAYPOINTS];
-uint8_t path_count = 0u;
-uint8_t path_current_index = 0u;
-uint8_t path_receiving = 0u;
-uint8_t path_loaded = 0u;
-uint8_t path_ready = 0u;
-uint8_t motor_test_active = 0u;
+static uint8_t init_ctrl1 = 0x40; // 01000000
+static uint8_t init_ctrl3 = 0x44; // 01000100
 
 // Vehicle Control 
 enum path_tracking_states my_tracking_states = Running;
-volatile uint8_t ir_joystick_x = IR_JOYSTICK_CENTER_X;
-volatile uint8_t ir_joystick_y = IR_JOYSTICK_CENTER_Y;
+volatile uint8_t ir_joystick_x = 128u;   /* centred */
+volatile uint8_t ir_joystick_y = 128u;
 volatile uint8_t ir_mode       = 0u;     /* 0 = auto, 1 = remote */
 volatile uint8_t ir_running    = 0u;     /* 1 after start, 0 after pause/reset */
 volatile uint8_t ir_path       = 0u;
 
 // Inductor readings
-uint16_t adc0;
-uint16_t v_left;
-uint16_t adc1;
-uint16_t v_right;
-uint16_t adc9;
-uint16_t v_front;
-uint16_t v_front_last;
+uint32_t adc0;
+uint32_t v_left;
+uint32_t adc1;
+uint32_t v_right;
+uint32_t adc9;
+uint32_t v_front;
 
-//float intersection_encountered_yaw_angle;
-float intersection_turn_current_yaw_angle;
-//uint32_t intersection_encountered_time;
+uint32_t intersection_encountered_time;
 uint8_t intersection_number = 0;
-//enum intersection_directions path1[] = {Forward, Left, Left, Forward, Right, Left, Right, Stop};
-enum intersection_directions path1[] = {Left, Left, Left, Right, Right, Left, Right, Stop};
+enum intersection_directions path1[] = {Forward, Left, Left, Forward, Right, Left, Right, Stop};
 uint8_t front_inductor_ready = 1;
 uint32_t intersection_leave_time;
-uint32_t last_intersection_turning_time;
 
 // 
 /* USER CODE END PV */
@@ -200,20 +154,6 @@ void handle_intersection_stop(void);
 // IMU 
 void uart_send_text(const char *s);
 void uart_send_line(const char *s);
-void uart_send_uint32(uint32_t value);
-void uart_send_path_tracking_debug(void);
-void uart_send_pose(void);
-void uart_send_origin(void);
-void UART_StartRxIT(void);
-void UART_ProcessRx(void);
-//void process_uart_command(char *line);
-void process_pathfinder_control(float dt_s);
-void sample_guidewire_sensors(void);
-void update_guidewire_origin_reference(void);
-void reset_pose_origin(void);
-float wrap_angle_deg(float angle_deg);
-int clamp_motor_speed(int speed);
-int parse_int_simple(const char *s, int *out);
 
 uint8_t probe_addr(uint8_t addr);
 void i2c_scan(void);
@@ -236,94 +176,15 @@ uint8_t MiniMU_CalibrateGyro(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-void UART_StartRxIT(void)
+int __io_putchar(int ch)
 {
-    HAL_UART_Receive_IT(&huart1, &uart_rx_byte, 1u);
-}
-
-float wrap_angle_deg(float angle_deg)
-{
-    while (angle_deg > 180.0f)
-    {
-        angle_deg -= 360.0f;
-    }
-
-    while (angle_deg < -180.0f)
-    {
-        angle_deg += 360.0f;
-    }
-
-    return angle_deg;
-}
-
-int clamp_motor_speed(int speed)
-{
-    if (speed > 100)
-    {
-        return 100;
-    }
-
-    if (speed < -100)
-    {
-        return -100;
-    }
-
-    return speed;
-}
-
-int parse_int_simple(const char *s, int *out)
-{
-    int sign = 1;
-    int value = 0;
-
-    if ((s == NULL) || (out == NULL) || (*s == '\0'))
-    {
-        return 0;
-    }
-
-    if (*s == '-')
-    {
-        sign = -1;
-        s++;
-    }
-
-    if (*s == '\0')
-    {
-        return 0;
-    }
-
-    while (*s != '\0')
-    {
-        if ((*s < '0') || (*s > '9'))
-        {
-            return 0;
-        }
-
-        value = (value * 10) + (*s - '0');
-        s++;
-    }
-
-    *out = sign * value;
-    return 1;
-}
-
-void reset_pose_origin(void)
-{
-    pose_x_cm = 0.0f;
-    pose_y_cm = 0.0f;
-    yaw_zero_deg = yaw_deg;
-    current_drive_cmd = 0;
-    origin_sent = 0u;
-    guidewire_origin_locked = 0u;
-    guidewire_lock_streak = 0u;
+    HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1u, HAL_MAX_DELAY);
+    return ch;
 }
 /* USER CODE END 0 */
 
 int main(void)
 {
-  uint32_t now_ms;
-  float dt_s;
 
   /* USER CODE BEGIN 1 */
 
@@ -337,7 +198,6 @@ int main(void)
 
   MX_GPIO_Init();
   MX_USART1_UART_Init();
-  UART_StartRxIT();
   MX_TIM2_Init();
   MX_ADC_Init();
   MX_I2C1_Init();
@@ -392,12 +252,7 @@ int main(void)
   IR_RX_Init();
   VL53L0X_Init();
   HAL_TIM_Base_Start_IT(&htim6);
-  /* printf("IR RX Ready\r\n"); */
-  reset_pose_origin();
-  last_imu_update_ms = HAL_GetTick();
-  last_pose_stream_ms = last_imu_update_ms;
-  last_guidewire_sample_ms = last_imu_update_ms;
-  uart_send_origin();
+  printf("IR RX Ready\r\n");
   
   /* USER CODE END 2 */
 
@@ -428,8 +283,6 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    now_ms = HAL_GetTick();
-    //UART_ProcessRx();
 
     //path_tracking();
    
@@ -440,7 +293,7 @@ int main(void)
     {
       uint8_t cmd, dat;
       while (IR_RX_GetFrame(&cmd, &dat)) {
-        /* printf("RAW cmd=0x%X data=%u\r\n", cmd, dat); */  /* DEBUG: remove later */
+        printf("RAW cmd=0x%X data=%u\r\n", cmd, dat);  /* DEBUG: remove later */
         HandleCommand(cmd, dat);
       }
     }
@@ -448,8 +301,7 @@ int main(void)
     static uint32_t last_dist_ms = 0;
     static uint16_t current_distance = 8190; // Default to max range
 
-    //path_tracking(dt_s);
-
+    path_tracking();
     if (HAL_GetTick() - last_dist_ms >= 100u) {
       last_dist_ms = HAL_GetTick();
       
@@ -466,7 +318,7 @@ int main(void)
       // EMERGENCY STOP: If bject is closer than 10cm
       Set_Left_Motor(0);
       Set_Right_Motor(0);
-      /* printf("obstacle.\r\n"); */
+      printf("OBSTACLE DETECTED! STOPPING.\r\n");
     } 
     else {
       // PATH CLEAR: Run normal driving modes based on IR command
@@ -480,64 +332,35 @@ int main(void)
   /* USER CODE END 3 */
 
     //motor_remote_control(ir_joystick_x, ir_joystick_y);
-    /*
-    if (motor_test_active)
-    {
-      current_drive_cmd = 0;
-      Set_Left_Motor(MOTOR_TEST_SPEED);
-      Set_Right_Motor(MOTOR_TEST_SPEED);
-    }
-    else if (path_ready)
-    {
-      process_pathfinder_control((float)(now_ms - last_imu_update_ms) / 1000.0f);
-    }
-    else if (ir_running && (ir_mode == IR_MODE_REMOTE))
-    {
-      current_drive_cmd = 0;
-      motor_remote_control(ir_joystick_x, ir_joystick_y);
-    }
-    else
-    {
-      current_drive_cmd = 0;
-      Set_Left_Motor(0);
-      Set_Right_Motor(0);
-    }
 
-    if ((now_ms - last_guidewire_sample_ms) >= GUIDEWIRE_SAMPLE_PERIOD_MS)
-    {
-      last_guidewire_sample_ms = now_ms;
-      sample_guidewire_sensors();
-      update_guidewire_origin_reference();
-    }
-    */
     /* ── Print joystick values every loop ───────────────────────────────── */
     //printf("X=%3u Y=%3u\r\n", ir_joystick_x, ir_joystick_y);
 
     
-    if ((now_ms - last_imu_update_ms) >= IMU_UPDATE_PERIOD_MS)
-    {
-      dt_s = (float)(now_ms - last_imu_update_ms) / 1000.0f;
-      last_imu_update_ms = now_ms;
+  /* USER CODE END 3 */
+  static uint32_t last_imu_print = 0;
 
-      if (!MiniMU_ReadGyro()) {}
-      else if (!MiniMU_ReadAccel()) {}
-      else
-      {
+  if (HAL_GetTick() - last_imu_print >= 200)
+  {
+    last_imu_print = HAL_GetTick();
+
+    if (!MiniMU_ReadGyro())
+    {
+        uart_send_line("Gyro read failed");
+    }
+    else if (!MiniMU_ReadAccel())
+    {
+        uart_send_line("Accel read failed");
+    }
+    else
+    {
         MiniMU_UpdateScaled();
         MiniMU_UpdateAngles();
-
-        yaw_deg = wrap_angle_deg(yaw_deg + gz_dps * dt_s);
-        pose_x_cm += ((float)current_drive_cmd * DRIVE_SPEED_SCALE_CM_S * dt_s) * cosf((yaw_deg - yaw_zero_deg) / RAD_TO_DEG);
-        pose_y_cm += ((float)current_drive_cmd * DRIVE_SPEED_SCALE_CM_S * dt_s) * sinf((yaw_deg - yaw_zero_deg) / RAD_TO_DEG);
-      }
+        MiniMU_PrintScaledData();
+        MiniMU_PrintAngles();
+        uart_send_line("");
     }
-
-    if ((now_ms - last_pose_stream_ms) >= POSE_STREAM_PERIOD_MS)
-    {
-      last_pose_stream_ms = now_ms;
-      /* Serial debug mode: suppress periodic origin/pose telemetry. */
-    }
-  /* USER CODE END 3 */
+  }
   }
   /* USER CODE END WHILE */
 }
@@ -588,8 +411,8 @@ void SystemClock_Config(void)
 /* USER CODE BEGIN 4 */
 // LEFT MOTOR (TIM2) |  CH1 (PA15) = Forward Pin | CH2 (PB3) = Reverse Pin
 void Set_Left_Motor(int speed){
-  speed = clamp_motor_speed(speed);
-  current_left_motor_cmd = speed;
+  if(speed > 100) speed = 100;
+  if(speed < -100) speed = -100;
   
   if(speed == 0) { // STOP
     __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
@@ -607,8 +430,8 @@ void Set_Left_Motor(int speed){
 
 // RIGHT MOTOR (TIM2) | CH3 (PA2) = Forward Pin | CH4 (PA3) = Reverse Pin
 void Set_Right_Motor(int speed){
-  speed = clamp_motor_speed(speed);
-  current_right_motor_cmd = speed;
+  if(speed > 100) speed = 100;
+  if(speed < -100) speed = -100;
   
   if(speed == 0) { // STOP
     __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 0);
@@ -626,7 +449,13 @@ void Set_Right_Motor(int speed){
 
 
 void path_tracking(void){
-  sample_guidewire_sensors();
+  adc0 = read_adc_channel(ADC_CHANNEL_0);
+  adc1 = read_adc_channel(ADC_CHANNEL_1);
+  adc9 = read_adc_channel(ADC_CHANNEL_9);
+  // left, right, front and adc mapping depend on wiring
+  v_left = adc_to_voltage(adc0);
+  v_right = adc_to_voltage(adc9);
+  v_front = adc_to_voltage(adc1);
   
   switch(my_tracking_states){
     case Running:
@@ -647,51 +476,6 @@ void path_tracking(void){
   }
 }
 
-void sample_guidewire_sensors(void)
-{
-  adc0 = read_adc_channel(ADC_CHANNEL_0);
-  adc1 = read_adc_channel(ADC_CHANNEL_1);
-  adc9 = read_adc_channel(ADC_CHANNEL_9);
-
-  // left, right, front and adc mapping depend on wiring
-  v_left = adc_to_voltage(adc0);
-  v_right = adc_to_voltage(adc9);
-  v_front = adc_to_voltage(adc1);
-}
-
-void update_guidewire_origin_reference(void)
-{
-  uint32_t lateral_error_mv;
-
-  if (guidewire_origin_locked)
-  {
-    return;
-  }
-
-  lateral_error_mv = (v_left > v_right) ? (v_left - v_right) : (v_right - v_left);
-
-  if ((v_front >= GUIDEWIRE_FRONT_THRESHOLD_MV) &&
-      (lateral_error_mv <= GUIDEWIRE_BALANCE_TOLERANCE_MV))
-  {
-    if (guidewire_lock_streak < GUIDEWIRE_LOCK_SAMPLES_REQUIRED)
-    {
-      guidewire_lock_streak++;
-    }
-  }
-  else
-  {
-    guidewire_lock_streak = 0u;
-  }
-
-  if (guidewire_lock_streak >= GUIDEWIRE_LOCK_SAMPLES_REQUIRED)
-  {
-    reset_pose_origin();
-    guidewire_origin_locked = 1u;
-    uart_send_origin();
-    uart_send_pose();
-  }
-}
-
 void handle_line_tracking(void){
   int base_power;
   int error;
@@ -705,34 +489,25 @@ void handle_line_tracking(void){
   error = (int)v_left - (int)v_right;
   base_power = PB - KS * abs(error);
   
-  /*
   if(v_front > 700){
-    base_power = base_power - KF * v_front;
-    if (base_power < 45) {
-      base_power = 45;
-    }
+    base_power = fmax(base_power - KF * v_front, 45);
   }
-  */
-  if(v_front > 700 && v_front > v_front_last){
-    base_power = PB - 0.1 * (v_front - v_front_last);
-  }
-  
+
+  //base_power = PB;
   left_power = base_power - KP * error;
   right_power = base_power + KP * error;
 
-  if(front_inductor_ready == 1 && v_front > STOP_VF){
+  if(front_inductor_ready == 1 && v_front > 1000){
     my_tracking_states = Intersection_encountered;
   }
   else{
     my_tracking_states = Running;
   }
 
+  printf("left: %ld; right: %d; front: %d\n", v_left, v_right, v_front);
   //printf("left_power: %d; right_power: %d\n", left_power, right_power);
-  uart_send_path_tracking_debug();
   Set_Left_Motor(left_power);
   Set_Right_Motor(right_power);
-
-  v_front_last = v_front;
 }
 
 void handle_intersection_encountered(void){
@@ -740,51 +515,40 @@ void handle_intersection_encountered(void){
   Set_Right_Motor(0);
   intersection_number += 1;
   my_tracking_states = Intersection_turning;
-  uart_send_line("START_TURN");
-  //intersection_encountered_yaw_angle = yaw_deg;
-  //intersection_turn_current_yaw_angle = yaw_deg;
-  last_intersection_turning_time = HAL_GetTick();
-  intersection_turn_current_yaw_angle = 0;
+  intersection_encountered_time = HAL_GetTick();
   front_inductor_ready = 0;
 }
 
 void handle_intersection_turning(void){
-  //uint32_t intersection_turning_current_time = HAL_GetTick();
-  float dt_s = (HAL_GetTick() - last_intersection_turning_time) / 1000.0f;
-  last_intersection_turning_time = HAL_GetTick();
-  intersection_turn_current_yaw_angle = intersection_turn_current_yaw_angle + gz_dps * dt_s;
+  uint32_t intersection_turning_current_time = HAL_GetTick();
   enum intersection_directions current_direction = path1[intersection_number-1];
-  uart_send_path_tracking_debug();
-  
+
   switch(current_direction){
     case Forward:
       my_tracking_states = Running;
-      uart_send_line("END_TURN");
       intersection_leave_time = HAL_GetTick();
       break;
 
     case Left:
-      if(intersection_turn_current_yaw_angle > -67){
-        Set_Left_Motor(-65); 
-        Set_Right_Motor(65);
+      if(intersection_turning_current_time - intersection_encountered_time < FULL_CIRCLE_TIME_60 / 4){
+        Set_Left_Motor(-60); 
+        Set_Right_Motor(60);
         my_tracking_states = Intersection_turning;  
       }
       else{
         my_tracking_states = Running;
-        uart_send_line("END_TURN");
         intersection_leave_time = HAL_GetTick();
       }
       break;
     
     case Right:
-      if(intersection_turn_current_yaw_angle < 90){
-        Set_Left_Motor(65);
-        Set_Right_Motor(-65);
+      if(intersection_turning_current_time - intersection_encountered_time < FULL_CIRCLE_TIME_60 / 4){
+        Set_Left_Motor(60); 
+        Set_Right_Motor(-60);
         my_tracking_states = Intersection_turning;  
       }
       else{
         my_tracking_states = Running;
-        uart_send_line("END_TURN");
         intersection_leave_time = HAL_GetTick();
       }
       break;
@@ -835,11 +599,9 @@ void motor_remote_control(uint8_t x, uint8_t y){
     right_power = -y_in;
   }
   else{
-    left_power = x_in + y_in / 2;
-    right_power = x_in - y_in / 2;
+    left_power = x_in + y_in / TURN_PRESCALAR;
+    right_power = x_in - y_in / TURN_PRESCALAR;
   }
-
-  current_drive_cmd = 0;
   
   Set_Left_Motor(left_power);
   Set_Right_Motor(right_power);
@@ -852,24 +614,19 @@ void HandleCommand(uint8_t cmd_name, uint8_t data)
   switch (cmd_name)
   {
     case IR_CMD_START:
-      motor_test_active = 0u;
       ir_running = 1u;
       break;
 
     case IR_CMD_PAUSE:
-      motor_test_active = 0u;
       ir_running = 0u;
-      path_ready = 0u;
       Set_Left_Motor(0);
       Set_Right_Motor(0);
       break;
 
     case IR_CMD_RESET:
-      motor_test_active = 0u;
       ir_running    = 0u;
-      path_ready    = 0u;
-      ir_joystick_x = IR_JOYSTICK_CENTER_X;
-      ir_joystick_y = IR_JOYSTICK_CENTER_Y;
+      ir_joystick_x = 128u;
+      ir_joystick_y = 128u;
       ir_mode       = IR_MODE_AUTO;
       ir_path       = IR_PATH_1;
       Set_Left_Motor(0);
@@ -939,387 +696,6 @@ void uart_send_line(const char *s)
     uart_send_text("\r\n");
 }
 
-void uart_send_uint32(uint32_t value)
-{
-    char buf[10];
-    int i = 0;
-
-    if (value == 0u)
-    {
-        uart_send_text("0");
-        return;
-    }
-
-    while ((value > 0u) && (i < (int)sizeof(buf)))
-    {
-        buf[i++] = (char)('0' + (value % 10u));
-        value /= 10u;
-    }
-
-    while (i > 0)
-    {
-        i--;
-        HAL_UART_Transmit(&huart1, (uint8_t *)&buf[i], 1u, HAL_MAX_DELAY);
-    }
-}
-
-void uart_send_path_tracking_debug(void)
-{
-    static uint32_t last_path_debug_ms = 0u;
-    uint32_t now_ms = HAL_GetTick();
-
-    if ((now_ms - last_path_debug_ms) < 100u)
-    {
-        return;
-    }
-
-    last_path_debug_ms = now_ms;
-    uart_send_text("v_front=");
-    uart_send_uint32(v_front);
-    uart_send_text(" v_left=");
-    uart_send_uint32(v_left);
-    uart_send_text(" v_right=");
-    uart_send_uint32(v_right);
-    uart_send_text("\r\n");
-}
-
-void uart_send_origin(void)
-{
-    uart_send_line("ORIGIN,0,0");
-    origin_sent = 1u;
-}
-
-void uart_send_pose(void)
-{
-    /* Pose telemetry formatting disabled to reduce flash usage. */
-}
-/*
-void process_uart_command(char *line)
-{
-    char *cmd;
-    char *arg1;
-    char *arg2;
-    char *arg3;
-    int index;
-    int count;
-    int x_scaled;
-    int y_scaled;
-
-    cmd = strtok(line, ",");
-    if (cmd == NULL)
-    {
-        return;
-    }
-
-    if (strcmp(cmd, "STATUS") == 0)
-    {
-        if (!origin_sent)
-        {
-            uart_send_origin();
-        }
-        uart_send_pose();
-        MiniMU_PrintScaledData();
-        MiniMU_PrintAngles();
-        return;
-    }
-
-    if (strcmp(cmd, "ZERO_YAW") == 0)
-    {
-        reset_pose_origin();
-        uart_send_origin();
-        uart_send_pose();
-        return;
-    }
-
-    if (strcmp(cmd, "PATH_BEGIN") == 0)
-    {
-        arg1 = strtok(NULL, ",");
-        count = 0;
-        if ((arg1 != NULL) && !parse_int_simple(arg1, &count))
-        {
-            count = 0;
-        }
-
-        path_count = 0u;
-        path_current_index = 0u;
-        path_loaded = 0u;
-        path_ready = 0u;
-        path_receiving = 1u;
-        motor_test_active = 0u;
-        current_drive_cmd = 0;
-        Set_Left_Motor(0);
-        Set_Right_Motor(0);
-
-        if (count > (int)PATH_MAX_WAYPOINTS)
-        {
-            count = (int)PATH_MAX_WAYPOINTS;
-        }
-
-        (void)count;
-        uart_send_line("PATH_ACK,BEGIN");
-        return;
-    }
-
-    if (strcmp(cmd, "WPT") == 0)
-    {
-        if (!path_receiving)
-        {
-            return;
-        }
-
-        arg1 = strtok(NULL, ",");
-        arg2 = strtok(NULL, ",");
-        arg3 = strtok(NULL, ",");
-
-        if ((arg1 == NULL) || (arg2 == NULL) || (arg3 == NULL))
-        {
-            return;
-        }
-
-        if (!parse_int_simple(arg1, &index))
-        {
-            return;
-        }
-
-        if (!parse_int_simple(arg2, &x_scaled) || !parse_int_simple(arg3, &y_scaled))
-        {
-            return;
-        }
-
-        if ((index >= 0) && (index < (int)PATH_MAX_WAYPOINTS))
-        {
-            path_x[index] = (float)x_scaled / 100.0f;
-            path_y[index] = (float)y_scaled / 100.0f;
-
-            if ((uint8_t)(index + 1) > path_count)
-            {
-                path_count = (uint8_t)(index + 1);
-            }
-        }
-        return;
-    }
-
-    if (strcmp(cmd, "PATH_END") == 0)
-    {
-        path_receiving = 0u;
-        path_current_index = 0u;
-        path_loaded = (path_count > 0u) ? 1u : 0u;
-        path_ready = 0u;
-        uart_send_line(path_loaded ? "PATH_ACK,LOADED" : "PATH_ACK,EMPTY");
-        return;
-    }
-
-    if ((strcmp(cmd, "START") == 0) || (strcmp(cmd, "TRACK_ON") == 0))
-    {
-        if (path_receiving)
-        {
-            uart_send_line("TRACK_ACK,BUSY");
-            return;
-        }
-
-        if (!path_loaded || (path_count == 0u))
-        {
-            uart_send_line("TRACK_ACK,NO_PATH");
-            return;
-        }
-
-        path_current_index = 0u;
-        path_ready = 1u;
-        motor_test_active = 0u;
-        uart_send_line("TRACK_ACK,ON");
-        return;
-    }
-
-    if (strcmp(cmd, "MOTOR_TEST") == 0)
-    {
-        path_ready = 0u;
-        path_receiving = 0u;
-        motor_test_active = 1u;
-        current_drive_cmd = 0;
-        Set_Left_Motor(MOTOR_TEST_SPEED);
-        Set_Right_Motor(MOTOR_TEST_SPEED);
-        uart_send_line("MOTOR_ACK,ON");
-        return;
-    }
-
-    if (strcmp(cmd, "TRACK_OFF") == 0)
-    {
-        uint8_t was_motor_test = motor_test_active;
-
-        motor_test_active = 0u;
-        ir_running = 0u;
-        path_ready = 0u;
-        current_drive_cmd = 0;
-        Set_Left_Motor(0);
-        Set_Right_Motor(0);
-        uart_send_line(was_motor_test ? "MOTOR_ACK,OFF" : "TRACK_ACK,OFF");
-        return;
-    }
-}
-*/
-/*
-void UART_ProcessRx(void)
-{
-    uint16_t pending_len;
-
-    if (!rx_line_ready)
-    {
-        return;
-    }
-
-    __disable_irq();
-    pending_len = rx_pending_len;
-    rx_line_ready = 0u;
-    __enable_irq();
-
-    if (pending_len == 0u)
-    {
-        return;
-    }
-
-    rx_pending_buf[pending_len] = 0u;
-    process_uart_command((char *)rx_pending_buf);
-}
-*/
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
-{
-    uint16_t i;
-
-    if (huart->Instance != USART1)
-    {
-        return;
-    }
-
-    if ((uart_rx_byte == '\r') || (uart_rx_byte == '\n'))
-    {
-        if ((rx_line_len > 0u) && !rx_line_ready)
-        {
-            for (i = 0u; i < rx_line_len; i++)
-            {
-                rx_pending_buf[i] = rx_line_buf[i];
-            }
-            rx_pending_len = rx_line_len;
-            rx_line_len = 0u;
-            rx_line_ready = 1u;
-        }
-        else
-        {
-            rx_line_len = 0u;
-        }
-    }
-    else if (rx_line_len < (sizeof(rx_line_buf) - 1u))
-    {
-        rx_line_buf[rx_line_len++] = uart_rx_byte;
-    }
-    else
-    {
-        rx_line_len = 0u;
-    }
-
-    HAL_UART_Receive_IT(&huart1, &uart_rx_byte, 1u);
-}
-
-void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
-{
-    if (huart->Instance != USART1)
-    {
-        return;
-    }
-
-    rx_line_len = 0u;
-    HAL_UART_Receive_IT(&huart1, &uart_rx_byte, 1u);
-}
-
-void process_pathfinder_control(float dt_s)
-{
-    float target_x;
-    float target_y;
-    float dx;
-    float dy;
-    float distance_cm;
-    float current_heading_deg;
-    float target_heading_deg;
-    float heading_error_deg;
-    float forward_scale;
-    int drive_cmd;
-    int steer_cmd;
-    int left_cmd;
-    int right_cmd;
-
-    if (!path_ready || (path_count == 0u))
-    {
-        return;
-    }
-
-    if (path_current_index >= path_count)
-    {
-        path_ready = 0u;
-        current_drive_cmd = 0;
-        Set_Left_Motor(0);
-        Set_Right_Motor(0);
-        return;
-    }
-
-    target_x = path_x[path_current_index];
-    target_y = path_y[path_current_index];
-    dx = target_x - pose_x_cm;
-    dy = target_y - pose_y_cm;
-    distance_cm = sqrtf((dx * dx) + (dy * dy));
-    current_heading_deg = wrap_angle_deg(yaw_deg - yaw_zero_deg);
-    target_heading_deg = atan2f(dy, dx) * RAD_TO_DEG;
-    heading_error_deg = wrap_angle_deg(target_heading_deg - current_heading_deg);
-
-    if (distance_cm <= PATH_REACHED_TOLERANCE_CM)
-    {
-        path_current_index++;
-        if (path_current_index >= path_count)
-        {
-            path_ready = 0u;
-            current_drive_cmd = 0;
-            Set_Left_Motor(0);
-            Set_Right_Motor(0);
-        }
-        return;
-    }
-
-    drive_cmd = PATH_FORWARD_SPEED;
-    if (distance_cm < 20.0f)
-    {
-        drive_cmd = PATH_APPROACH_SPEED;
-    }
-
-    if (fabsf(heading_error_deg) > 60.0f)
-    {
-        drive_cmd = PATH_APPROACH_SPEED;
-    }
-
-    steer_cmd = (int)(heading_error_deg * PATH_STEER_GAIN);
-
-    if (steer_cmd > PATH_MAX_STEER_CMD)
-    {
-        steer_cmd = PATH_MAX_STEER_CMD;
-    }
-    else if (steer_cmd < -PATH_MAX_STEER_CMD)
-    {
-        steer_cmd = -PATH_MAX_STEER_CMD;
-    }
-
-    forward_scale = cosf(fabsf(heading_error_deg) / RAD_TO_DEG);
-    if (forward_scale < 0.0f)
-    {
-        forward_scale = 0.0f;
-    }
-
-    current_drive_cmd = (int)(drive_cmd * forward_scale);
-    left_cmd = clamp_motor_speed(drive_cmd + steer_cmd);
-    right_cmd = clamp_motor_speed(drive_cmd - steer_cmd);
-
-    Set_Left_Motor(left_cmd);
-    Set_Right_Motor(right_cmd);
-
-    (void)dt_s;
-}
-
 uint8_t probe_addr(uint8_t addr)
 {
     return (HAL_I2C_IsDeviceReady(&hi2c1, (uint16_t)(addr << 1), 3, 100) == HAL_OK) ? 1u : 0u;
@@ -1327,15 +703,28 @@ uint8_t probe_addr(uint8_t addr)
 
 void i2c_scan(void)
 {
+    char msg[64];
+    uint8_t found = 0;
     uint8_t addr;
+
+    uart_send_line("I2C scan start");
 
     for (addr = 0x08; addr < 0x78; addr++)
     {
         if (probe_addr(addr))
         {
-            uart_send_line("I2C device found");
+            snprintf(msg, sizeof(msg), "I2C device found at 0x%02X", addr);
+            uart_send_line(msg);
+            found = 1;
         }
     }
+
+    if (!found)
+    {
+        uart_send_line("No I2C devices found");
+    }
+
+    uart_send_line("I2C scan end");
 }
 
 uint8_t imu_write_reg(uint8_t reg, uint8_t val)
@@ -1383,20 +772,93 @@ uint8_t MiniMU_Init(void)
 
     if (!MiniMU_FindIMU())
     {
+        uart_send_line("Could not find LSM6DS33 at 0x6B or 0x6A");
         return 0;
     }
 
-    imu_write_reg(LSM6DS33_CTRL1_XL, 0x40);
-    imu_write_reg(LSM6DS33_CTRL2_G, 0x40);
-    imu_write_reg(LSM6DS33_CTRL3_C, 0x44);
+    snprintf(msg, sizeof(msg), "LSM6DS33 addr = 0x%02X", imu_addr);
+    uart_send_line(msg);
 
+    if (!imu_read_reg(LSM6DS33_WHO_AM_I_REG, &who))
+    {
+        uart_send_line("WHO_AM_I read failed");
+        return 0;
+    }
 
+    snprintf(msg, sizeof(msg), "WHO_AM_I = 0x%02X", who);
+    uart_send_line(msg);
+
+    if (who != LSM6DS33_WHO_AM_I_VAL)
+    {
+        uart_send_line("WHO_AM_I mismatch");
+        return 0;
+    }
+
+    if (!imu_write_reg(LSM6DS33_CTRL3_C, 0x01))
+    {
+        uart_send_line("CTRL3_C reset write failed");
+        return 0;
+    }
+
+    if (!imu_write_reg(LSM6DS33_CTRL3_C, 0x44))
+    {
+        uart_send_line("CTRL3_C config write failed");
+        return 0;
+    }
+
+    if (!imu_write_reg(LSM6DS33_CTRL1_XL, 0x40))
+    {
+        uart_send_line("CTRL1_XL write failed");
+        return 0;
+    }
+
+    if (!imu_write_reg(LSM6DS33_CTRL2_G, 0x40))
+    {
+        uart_send_line("CTRL2_G write failed");
+        return 0;
+    }
+
+    HAL_Delay(20);
+
+    if (!imu_read_reg(LSM6DS33_CTRL1_XL, &ctrl1))
+    {
+        uart_send_line("CTRL1_XL readback failed");
+        return 0;
+    }
+
+    if (!imu_read_reg(LSM6DS33_CTRL2_G, &ctrl2))
+    {
+        uart_send_line("CTRL2_G readback failed");
+        return 0;
+    }
+
+    if (!imu_read_reg(LSM6DS33_CTRL3_C, &ctrl3))
+    {
+        uart_send_line("CTRL3_C readback failed");
+        return 0;
+    }
+
+    snprintf(msg, sizeof(msg),
+             "CTRL1_XL=0x%02X CTRL2_G=0x%02X CTRL3_C=0x%02X",
+             ctrl1, ctrl2, ctrl3);
+    uart_send_line(msg);
+
+    if ((ctrl1 == 0x00) && (ctrl2 == 0x00))
+    {
+        uart_send_line("Sensor config did not stick");
+        return 0;
+    }
+
+    uart_send_line("MiniMU init OK");
     return 1;
 }
 
 uint8_t MiniMU_ReadGyro(void)
 {
-    imu_read_regs(LSM6DS33_OUTX_L_G, gyro_buf, 6);
+    if (!imu_read_regs(LSM6DS33_OUTX_L_G, gyro_buf, 6))
+    {
+        return 0;
+    }
 
     gyro_x = (int16_t)((((uint16_t)gyro_buf[1]) << 8) | gyro_buf[0]);
     gyro_y = (int16_t)((((uint16_t)gyro_buf[3]) << 8) | gyro_buf[2]);
@@ -1421,9 +883,9 @@ uint8_t MiniMU_ReadAccel(void)
 
 void MiniMU_UpdateScaled(void)
 {
-    ax_g = ((float)accel_x) *  0.000061f;
-    ay_g = ((float)accel_y) *  0.000061f;
-    az_g = ((float)accel_z) *  0.000061f;
+    ax_g = ((float)accel_x) * ACCEL_SENS_G_PER_LSB;
+    ay_g = ((float)accel_y) * ACCEL_SENS_G_PER_LSB;
+    az_g = ((float)accel_z) * ACCEL_SENS_G_PER_LSB;
 
     gx_dps = ((float)gyro_x) * GYRO_SENS_DPS_PER_LSB - gx_bias;
     gy_dps = ((float)gyro_y) * GYRO_SENS_DPS_PER_LSB - gy_bias;
@@ -1447,12 +909,41 @@ void MiniMU_UpdateAngles(void)
 
 void MiniMU_PrintScaledData(void)
 {
-    /* Detailed IMU telemetry formatting disabled to reduce flash usage. */
+    char msg[220];
+
+    int ax_milli = (int)(ax_g * 1000.0f);
+    int ay_milli = (int)(ay_g * 1000.0f);
+    int az_milli = (int)(az_g * 1000.0f);
+
+    int gx_milli = (int)(gx_dps * 1000.0f);
+    int gy_milli = (int)(gy_dps * 1000.0f);
+    int gz_milli = (int)(gz_dps * 1000.0f);
+
+    snprintf(msg, sizeof(msg),
+             "ACC[g] X:%d.%03d Y:%d.%03d Z:%d.%03d | GYRO[dps] X:%d.%03d Y:%d.%03d Z:%d.%03d",
+             ax_milli / 1000, (ax_milli < 0 ? -ax_milli : ax_milli) % 1000,
+             ay_milli / 1000, (ay_milli < 0 ? -ay_milli : ay_milli) % 1000,
+             az_milli / 1000, (az_milli < 0 ? -az_milli : az_milli) % 1000,
+             gx_milli / 1000, (gx_milli < 0 ? -gx_milli : gx_milli) % 1000,
+             gy_milli / 1000, (gy_milli < 0 ? -gy_milli : gy_milli) % 1000,
+             gz_milli / 1000, (gz_milli < 0 ? -gz_milli : gz_milli) % 1000);
+
+    uart_send_line(msg);
 }
 
 void MiniMU_PrintAngles(void)
 {
-    /* Detailed angle telemetry formatting disabled to reduce flash usage. */
+    char msg[120];
+
+    int roll_hundredths = (int)(roll_deg * 100.0f);
+    int pitch_hundredths = (int)(pitch_deg * 100.0f);
+
+    snprintf(msg, sizeof(msg),
+             "ANGLE roll:%d.%02d deg | pitch:%d.%02d deg",
+             roll_hundredths / 100, (roll_hundredths < 0 ? -roll_hundredths : roll_hundredths) % 100,
+             pitch_hundredths / 100, (pitch_hundredths < 0 ? -pitch_hundredths : pitch_hundredths) % 100);
+
+    uart_send_line(msg);
 }
 
 uint8_t MiniMU_CalibrateGyro(void)
@@ -1461,11 +952,15 @@ uint8_t MiniMU_CalibrateGyro(void)
     int32_t sum_x = 0;
     int32_t sum_y = 0;
     int32_t sum_z = 0;
+    char msg[128];
+
+    uart_send_line("Gyro calibration starting. Keep IMU still.");
 
     for (i = 0; i < GYRO_CAL_SAMPLES; i++)
     {
         if (!MiniMU_ReadGyro())
         {
+            uart_send_line("Gyro calibration read failed");
             return 0;
         }
 
@@ -1480,6 +975,20 @@ uint8_t MiniMU_CalibrateGyro(void)
     gy_bias = ((float)sum_y / (float)GYRO_CAL_SAMPLES) * GYRO_SENS_DPS_PER_LSB;
     gz_bias = ((float)sum_z / (float)GYRO_CAL_SAMPLES) * GYRO_SENS_DPS_PER_LSB;
 
+    {
+        int bx = (int)(gx_bias * 1000.0f);
+        int by = (int)(gy_bias * 1000.0f);
+        int bz = (int)(gz_bias * 1000.0f);
+
+        snprintf(msg, sizeof(msg),
+                 "Gyro bias[dps] X:%d.%03d Y:%d.%03d Z:%d.%03d",
+                 bx / 1000, (bx < 0 ? -bx : bx) % 1000,
+                 by / 1000, (by < 0 ? -by : by) % 1000,
+                 bz / 1000, (bz < 0 ? -bz : bz) % 1000);
+        uart_send_line(msg);
+    }
+
+    uart_send_line("Gyro calibration done");
     return 1;
 }
 /* USER CODE END 4 */
