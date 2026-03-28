@@ -2,7 +2,7 @@ param(
     [string]$Target    = "build",
     [string]$Port      = "auto",
     [string]$Baud      = "115200",
-    [string]$FlashTool = ""
+    [string]$FlashTool = "C:\Users\Owner\Downloads\STM32L051 (1)\stm32flash\stm32flash.exe"
 )
 
 $ErrorActionPreference = "Stop"
