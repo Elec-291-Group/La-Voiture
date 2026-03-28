@@ -18,7 +18,14 @@
 #define IR_CMD_PATH         4u
 #define IR_CMD_JOYSTICK_X   5u
 #define IR_CMD_JOYSTICK_Y   6u
-/* Commands 7–24 reserved for IMU register TX (see ir_tx.h)                  */
+/* Commands 7–12: IMU telemetry TX (STM32 → EFM8)                            */
+#define IR_CMD_ACCEL_X      7u
+#define IR_CMD_ACCEL_Y      8u
+#define IR_CMD_ACCEL_Z      9u
+#define IR_CMD_GYRO_X       10u
+#define IR_CMD_GYRO_Y       11u
+#define IR_CMD_GYRO_Z       12u
+/* Commands 13–24 reserved for future IMU register TX (see ir_tx.h)          */
 
 /* Data values for IR_CMD_MODE */
 #define IR_MODE_FIELD       0x00u

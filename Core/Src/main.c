@@ -1245,7 +1245,24 @@ void ControllerStateMachine(void)
         controller_state = STATE_PAUSE;
       }
       else
-      { 
+      {
+        if (!IR_TX_Busy())
+        {
+          static uint8_t imu_tx_idx = 0u;
+          uint16_t val;
+          uint8_t  cmd;
+          switch (imu_tx_idx)
+          {
+            case 0:  cmd = IR_CMD_ACCEL_X; val = (uint16_t)accel_x; break;
+            case 1:  cmd = IR_CMD_ACCEL_Y; val = (uint16_t)accel_y; break;
+            case 2:  cmd = IR_CMD_ACCEL_Z; val = (uint16_t)accel_z; break;
+            case 3:  cmd = IR_CMD_GYRO_X;  val = (uint16_t)gyro_x;  break;
+            case 4:  cmd = IR_CMD_GYRO_Y;  val = (uint16_t)gyro_y;  break;
+            default: cmd = IR_CMD_GYRO_Z;  val = (uint16_t)gyro_z;  break;
+          }
+          IR_Send_Cmd(cmd, val);
+          if (++imu_tx_idx >= 6u) imu_tx_idx = 0u;
+        }
         CarStateMachine();
       }
       break;
@@ -1362,7 +1379,7 @@ void HandleCommand(uint8_t cmd_name, uint16_t val)
         {
           path_count = idx + 1u;
         }
-        if (!IR_TX_Busy())
+        if (!IR_TX_Busy() && (path_x[idx] != 0u || path_y[idx] != 0u))
         {
           IR_Send_Cmd(IR_CMD_WAYPOINTS_ARRIVED, 0x0000u);
         }
