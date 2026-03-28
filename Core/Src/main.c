@@ -353,7 +353,12 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     now_ms = HAL_GetTick();
-    IR_Debug_Update(); // IR debug function
+
+    if (ir_rx_ready) {
+        ir_rx_ready = 0u;
+        HandleCommand(ir_rx_frame.cmd, ir_rx_frame.val);
+    }
+    IR_RX_Update();
     /*--------------------------------------------------------------------------*/
     // Collision Detection
     /*--------------------------------------------------------------------------*/
@@ -475,17 +480,19 @@ void IR_Debug_Update(void)
     /* TX: keep sending addr=0x7 frames every 100 ms */
     static uint32_t last_tx_ms = 0;
     static uint8_t  tx_reg     = 0;
-
+/*
     if (!IR_TX_Busy() && (HAL_GetTick() - last_tx_ms) >= 100u) {
         last_tx_ms = HAL_GetTick();
         IR_Send_IMU(tx_reg, 0xABCD);
         tx_reg = (tx_reg + 1u) % IMU_REG_COUNT;
     }
-    /* RX: print every frame received with addr=0x6 */
+*/
+    /* RX: decode every received frame and dispatch to HandleCommand */
     if (ir_rx_ready) {
         ir_rx_ready = 0u;
         printf("[RX] addr=0x%X  cmd=%u  val=0x%04X\r\n",
                ir_rx_frame.addr, ir_rx_frame.cmd, ir_rx_frame.val);
+        HandleCommand(ir_rx_frame.cmd, ir_rx_frame.val);
     }
 }
 
@@ -1260,9 +1267,9 @@ void CarStateMachine(void)
   }
 }
 
-/* ── IR command handler — called from ISR context (TIM6 tick) ───────────── */
+/* ── IR command handler — called from main loop on each decoded IR frame ─── */
 /* Keep this function short: no blocking calls, no printf.                    */
-void HandleCommand(uint8_t cmd_name, uint8_t data)
+void HandleCommand(uint8_t cmd_name, uint16_t val)
 {
   switch (cmd_name)
   {
@@ -1283,19 +1290,19 @@ void HandleCommand(uint8_t cmd_name, uint8_t data)
       break;
 
     case IR_CMD_MODE:
-      ir_mode = data;   /* IR_MODE_FIELD / IR_MODE_REMOTE / IR_MODE_PATH */
+      ir_mode = (uint8_t)val;   /* IR_MODE_FIELD / IR_MODE_REMOTE / IR_MODE_PATH */
       break;
 
     case IR_CMD_PATH:
-      ir_path = data;   /* IR_PATH_1 / IR_PATH_2 / IR_PATH_3 */
+      ir_path = (uint8_t)val;   /* IR_PATH_1 / IR_PATH_2 / IR_PATH_3 */
       break;
 
     case IR_CMD_JOYSTICK_X:
-      ir_joystick_x = data;
+      ir_joystick_x = (uint8_t)val;
       break;
 
     case IR_CMD_JOYSTICK_Y:
-      ir_joystick_y = data;
+      ir_joystick_y = (uint8_t)val;
       break;
 
     default:

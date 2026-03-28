@@ -1,4 +1,4 @@
-// IMU Registers 
+// IMU Registers
 #define LSM6DS33_ADDR_HIGH        0x6B
 #define LSM6DS33_ADDR_LOW         0x6A
 
@@ -20,12 +20,16 @@
 
 // Vehicle Control 
 // needed to be tuned !!!
-#define KP 0.020f
-#define KS 0.015f
-#define KF 0.025f // decrease speed before approaching the intersection
+#define KP 0.015f // how much the car turns to fix itself
+#define KS 0.015f // how much the car reduces speed when turning
+#define KF 0.020f // decrease speed before approaching the intersection
 //-------- base power of motor in auto mode -----------------
-#define PB 65
+#define PB 75
 #define STOP_VF 1500
+#define LEFT_TURN_DEGREE -88
+#define RIGHT_TURN_DEGREE 88
+#define INTERSECTION_COMPENSATION_TIME 375
+#define INTERSECTION_TURN_SETTLE_TIME 250
 
 //For sensor
 #define VL53L0X_I2C_ADDR 0x52 
