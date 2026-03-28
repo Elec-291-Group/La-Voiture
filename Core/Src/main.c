@@ -24,6 +24,7 @@
 #include "ir_rx.h"
 #include "ir_tx.h"
 #include "config.h"
+#include "datatypes.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -33,56 +34,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
-// IMU Registers 
-#define LSM6DS33_ADDR_HIGH        0x6B
-#define LSM6DS33_ADDR_LOW         0x6A
-
-#define LSM6DS33_WHO_AM_I_REG     0x0F
-#define LSM6DS33_CTRL1_XL         0x10
-#define LSM6DS33_CTRL2_G          0x11
-#define LSM6DS33_CTRL3_C          0x12
-
-#define LSM6DS33_OUTX_L_G         0x22
-#define LSM6DS33_OUTX_L_XL        0x28
-
-#define LSM6DS33_WHO_AM_I_VAL     0x69
-
-// IMU Values
-#define GYRO_SENS_DPS_PER_LSB     0.00875f
-
-#define GYRO_CAL_SAMPLES          200
-#define RAD_TO_DEG                57.2957795f
-
-// Vehicle Control 
-// needed to be tuned !!!
-#define KP 0.020f
-#define KS 0.015f
-#define KF 0.025f // decrease speed before approaching the intersection
-//-------- base power of motor in auto mode -----------------
-#define PB 65
-#define STOP_VF 1500
-
-//For sensor
-#define VL53L0X_I2C_ADDR 0x52 
-
-// ms it takes for the car to rotate one full circle at 60% power
-#define IMU_UPDATE_PERIOD_MS      20u
-#define POSE_STREAM_PERIOD_MS     100u
-#define PATH_MAX_WAYPOINTS        32u
-#define PATH_REACHED_TOLERANCE_CM 8.0f
-#define DRIVE_SPEED_SCALE_CM_S    0.35f
-#define PATH_FORWARD_SPEED        40
-#define PATH_APPROACH_SPEED       25
-#define PATH_STEER_GAIN           1.0f
-#define PATH_MAX_STEER_CMD        55
-#define MOTOR_TEST_SPEED          40
-#define IR_JOYSTICK_CENTER_X      165u
-#define IR_JOYSTICK_CENTER_Y      170u
-#define GUIDEWIRE_FRONT_THRESHOLD_MV    1000u
-#define GUIDEWIRE_BALANCE_TOLERANCE_MV   150u
-#define GUIDEWIRE_LOCK_SAMPLES_REQUIRED    5u
-#define GUIDEWIRE_SAMPLE_PERIOD_MS        20u
 
 /* USER CODE END PD */
 
@@ -144,20 +95,18 @@ volatile uint16_t rx_pending_len = 0u;
 volatile uint8_t rx_line_ready = 0u;
 uint8_t uart_rx_byte = 0u;
 
+// path tracking variables
 float path_x[PATH_MAX_WAYPOINTS];
 float path_y[PATH_MAX_WAYPOINTS];
 uint8_t path_count = 0u;
 uint8_t path_current_index = 0u;
 uint8_t path_receiving = 0u;
 uint8_t path_loaded = 0u;
-uint8_t path_ready = 0u;
-uint8_t motor_test_active = 0u;
 
 // Vehicle Control 
 enum path_tracking_states my_tracking_states = Running;
 volatile uint8_t ir_joystick_x = IR_JOYSTICK_CENTER_X;
 volatile uint8_t ir_joystick_y = IR_JOYSTICK_CENTER_Y;
-
 
 volatile uint8_t ir_mode       = 0u;     
 volatile uint8_t ir_running    = 0u;    
@@ -756,54 +705,6 @@ void motor_remote_control(uint8_t x, uint8_t y){
   Set_Right_Motor(right_power);
 }
 
-/* ── IR command handler — called from ISR context (TIM6 tick) ───────────── */
-/* Keep this function short: no blocking calls, no printf.                    */
-void HandleCommand(uint8_t cmd_name, uint8_t data)
-{
-  switch (cmd_name)
-  {
-    case IR_CMD_START:
-      motor_test_active = 0u;
-      ir_running = 1u;
-      break;
-
-    case IR_CMD_PAUSE:
-      motor_test_active = 0u;
-      ir_running = 0u;
-      path_ready = 0u;
-      break;
-
-    case IR_CMD_RESET:
-      motor_test_active = 0u;
-      ir_running    = 0u;
-      path_ready    = 0u;
-      ir_joystick_x = IR_JOYSTICK_CENTER_X;
-      ir_joystick_y = IR_JOYSTICK_CENTER_Y;
-      ir_mode       = IR_MODE_FIELD;
-      ir_path       = IR_PATH_1;
-      break;
-
-    case IR_CMD_MODE:
-      ir_mode = data;   /* IR_MODE_FIELD / IR_MODE_REMOTE / IR_MODE_PATH */
-      break;
-
-    case IR_CMD_PATH:
-      ir_path = data;   /* IR_PATH_1 / IR_PATH_2 / IR_PATH_3 */
-      break;
-
-    case IR_CMD_JOYSTICK_X:
-      ir_joystick_x = data;
-      break;
-
-    case IR_CMD_JOYSTICK_Y:
-      ir_joystick_y = data;
-      break;
-
-    default:
-      break;
-  }
-}
-
 void Set_Car_Speed(int speed){
   //speed should be between 0 and 100
   if(speed > 100) 
@@ -961,14 +862,8 @@ void process_pathfinder_control(float dt_s)
     int left_cmd;
     int right_cmd;
 
-    if (!path_ready || (path_count == 0u))
-    {
-        return;
-    }
-
     if (path_current_index >= path_count)
     {
-        path_ready = 0u;
         current_drive_cmd = 0;
         Set_Left_Motor(0);
         Set_Right_Motor(0);
@@ -989,7 +884,6 @@ void process_pathfinder_control(float dt_s)
         path_current_index++;
         if (path_current_index >= path_count)
         {
-            path_ready = 0u;
             current_drive_cmd = 0;
             Set_Left_Motor(0);
             Set_Right_Motor(0);
@@ -1088,12 +982,6 @@ uint8_t MiniMU_FindIMU(void)
 
 uint8_t MiniMU_Init(void)
 {
-    uint8_t who = 0;
-    uint8_t ctrl1 = 0;
-    uint8_t ctrl2 = 0;
-    uint8_t ctrl3 = 0;
-    char msg[96];
-
     i2c_scan();
 
     if (!MiniMU_FindIMU())
@@ -1104,7 +992,6 @@ uint8_t MiniMU_Init(void)
     imu_write_reg(LSM6DS33_CTRL1_XL, 0x40);
     imu_write_reg(LSM6DS33_CTRL2_G, 0x40);
     imu_write_reg(LSM6DS33_CTRL3_C, 0x44);
-
 
     return 1;
 }
@@ -1312,6 +1199,49 @@ void CarStateMachine(void)
       Set_Left_Motor(0);
       Set_Right_Motor(0);
       car_state = STATE_FIELD_TRACKING;
+      break;
+  }
+}
+
+/* ── IR command handler — called from ISR context (TIM6 tick) ───────────── */
+/* Keep this function short: no blocking calls, no printf.                    */
+void HandleCommand(uint8_t cmd_name, uint8_t data)
+{
+  switch (cmd_name)
+  {
+    case IR_CMD_START:
+      ir_running = 1u;
+      break;
+
+    case IR_CMD_PAUSE:
+      ir_running = 0u;
+      break;
+
+    case IR_CMD_RESET:
+      ir_reset = 1u;
+      ir_joystick_x = IR_JOYSTICK_CENTER_X;
+      ir_joystick_y = IR_JOYSTICK_CENTER_Y;
+      ir_mode       = IR_MODE_FIELD;
+      ir_path       = IR_PATH_1;
+      break;
+
+    case IR_CMD_MODE:
+      ir_mode = data;   /* IR_MODE_FIELD / IR_MODE_REMOTE / IR_MODE_PATH */
+      break;
+
+    case IR_CMD_PATH:
+      ir_path = data;   /* IR_PATH_1 / IR_PATH_2 / IR_PATH_3 */
+      break;
+
+    case IR_CMD_JOYSTICK_X:
+      ir_joystick_x = data;
+      break;
+
+    case IR_CMD_JOYSTICK_Y:
+      ir_joystick_y = data;
+      break;
+
+    default:
       break;
   }
 }
