@@ -75,7 +75,9 @@ void Error_Handler(void);
 enum path_tracking_states {
   Running,
   Intersection_encountered,
+  Intersection_compensation,
   Intersection_turning,
+  Intersection_turn_settle,
   Intersection_stop,
 };
 

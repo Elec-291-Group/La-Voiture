@@ -124,13 +124,16 @@ uint16_t v_front_last;
 
 //float intersection_encountered_yaw_angle;
 float intersection_turn_current_yaw_angle;
-//uint32_t intersection_encountered_time;
+uint32_t intersection_encountered_time;
 uint8_t intersection_number = 0;
-//enum intersection_directions path1[] = {Forward, Left, Left, Forward, Right, Left, Right, Stop};
-enum intersection_directions path1[] = {Left, Left, Left, Right, Right, Left, Right, Stop};
+enum intersection_directions path1[] = {Forward, Left, Left, Forward, Right, Left, Right, Stop};
+//enum intersection_directions path1[] = {Left, Left, Left, Right, Right, Left, Right, Stop};
+enum intersection_directions path2[] = {Left, Right, Left, Right, Forward, Forward, Stop};
+enum intersection_directions path3[] = {Right, Forward, Right, Left, Right, Left, Forward, Stop};
 uint8_t front_inductor_ready = 1;
 uint32_t intersection_leave_time;
 uint32_t last_intersection_turning_time;
+uint32_t intersection_turn_settle_start_time;
 
 // Time
 uint32_t now_ms;
@@ -172,6 +175,8 @@ void handle_line_tracking(void);
 void motor_remote_control(uint8_t, uint8_t);
 void Set_Car_Speed(int speed);
 void handle_intersection_stop(void);
+void handle_intersection_compensation(void);
+void handle_intersection_turn_settle(void);
 
 // IMU 
 void uart_send_text(const char *s);
@@ -497,11 +502,19 @@ void path_tracking(void){
       handle_intersection_encountered();
       break;
 
+    case Intersection_compensation:
+      handle_intersection_compensation();
+      break;
+
     case Intersection_turning:
       handle_intersection_turning();
       break;
 
-    case Stop:
+    case Intersection_turn_settle:
+      handle_intersection_turn_settle();
+      break;
+
+    case Intersection_stop:
       handle_intersection_stop();
       break;
   }
@@ -588,7 +601,6 @@ void handle_line_tracking(void){
   }
 
   //printf("left_power: %d; right_power: %d\n", left_power, right_power);
-  uart_send_path_tracking_debug();
   Set_Left_Motor(left_power);
   Set_Right_Motor(right_power);
 
@@ -599,13 +611,28 @@ void handle_intersection_encountered(void){
   Set_Left_Motor(0);
   Set_Right_Motor(0);
   intersection_number += 1;
-  my_tracking_states = Intersection_turning;
-  uart_send_line("START_TURN");
-  //intersection_encountered_yaw_angle = yaw_deg;
-  //intersection_turn_current_yaw_angle = yaw_deg;
-  last_intersection_turning_time = HAL_GetTick();
-  intersection_turn_current_yaw_angle = 0;
-  front_inductor_ready = 0;
+  //my_tracking_states = Intersection_turning;
+  my_tracking_states = Intersection_compensation;
+  intersection_encountered_time = HAL_GetTick();
+  //last_intersection_turning_time = HAL_GetTick();
+  //intersection_turn_current_yaw_angle = 0;
+  //front_inductor_ready = 0;
+}
+
+void handle_intersection_compensation(void){
+  if(HAL_GetTick() - intersection_encountered_time < INTERSECTION_COMPENSATION_TIME){
+    Set_Left_Motor(50);
+    Set_Right_Motor(50);
+    my_tracking_states = Intersection_compensation;
+  }
+  else{
+    Set_Left_Motor(0);
+    Set_Right_Motor(0);
+    my_tracking_states = Intersection_turning;
+    last_intersection_turning_time = HAL_GetTick();
+    intersection_turn_current_yaw_angle = 0;
+    front_inductor_ready = 0;
+  }
 }
 
 void handle_intersection_turning(void){
@@ -613,53 +640,83 @@ void handle_intersection_turning(void){
   float dt_s = (HAL_GetTick() - last_intersection_turning_time) / 1000.0f;
   last_intersection_turning_time = HAL_GetTick();
   intersection_turn_current_yaw_angle = intersection_turn_current_yaw_angle + gz_dps * dt_s;
-  enum intersection_directions current_direction = path1[intersection_number-1];
-  uart_send_path_tracking_debug();
+  enum intersection_directions current_direction;
+  switch(ir_path){
+    case IR_PATH_1:
+      current_direction = path1[intersection_number-1];
+      break;
+    
+    case IR_PATH_2:
+      current_direction = path2[intersection_number-1];
+      break;
+
+    case IR_PATH_3:
+      current_direction = path3[intersection_number-1];
+      break;
+    
+    default:
+      current_direction = Stop;
+      break;
+  }
   
   switch(current_direction){
     case Forward:
       my_tracking_states = Running;
-      uart_send_line("END_TURN");
       intersection_leave_time = HAL_GetTick();
       break;
 
     case Left:
-      if(intersection_turn_current_yaw_angle > -67){
+      if(intersection_turn_current_yaw_angle > LEFT_TURN_DEGREE){
         Set_Left_Motor(-65); 
         Set_Right_Motor(65);
         my_tracking_states = Intersection_turning;  
       }
       else{
-        my_tracking_states = Running;
-        uart_send_line("END_TURN");
-        intersection_leave_time = HAL_GetTick();
+        Set_Left_Motor(0);
+        Set_Right_Motor(0);
+        intersection_turn_settle_start_time = HAL_GetTick();
+        my_tracking_states = Intersection_turn_settle;
       }
       break;
     
     case Right:
-      if(intersection_turn_current_yaw_angle < 90){
+      if(intersection_turn_current_yaw_angle < RIGHT_TURN_DEGREE){
         Set_Left_Motor(65);
         Set_Right_Motor(-65);
         my_tracking_states = Intersection_turning;  
       }
       else{
-        my_tracking_states = Running;
-        uart_send_line("END_TURN");
-        intersection_leave_time = HAL_GetTick();
+        Set_Left_Motor(0);
+        Set_Right_Motor(0);
+        intersection_turn_settle_start_time = HAL_GetTick();
+        my_tracking_states = Intersection_turn_settle;
       }
       break;
 
     case Stop:
-      my_tracking_states = Stop;
+      my_tracking_states = Intersection_stop;
       intersection_leave_time = HAL_GetTick();
       break;
   }  
 }
 
+void handle_intersection_turn_settle(void){
+  Set_Left_Motor(0);
+  Set_Right_Motor(0);
+
+  if(HAL_GetTick() - intersection_turn_settle_start_time < INTERSECTION_TURN_SETTLE_TIME){
+    my_tracking_states = Intersection_turn_settle;
+  }
+  else{
+    my_tracking_states = Running;
+    intersection_leave_time = HAL_GetTick();
+  }
+}
+
 void handle_intersection_stop(void){
   Set_Left_Motor(0);
   Set_Right_Motor(0);
-  my_tracking_states = Stop;
+  my_tracking_states = Intersection_stop;
 }
 
 void motor_remote_control(uint8_t x, uint8_t y){
