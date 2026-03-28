@@ -182,10 +182,9 @@ void handle_intersection_turn_settle(void);
 void uart_send_text(const char *s);
 void uart_send_line(const char *s);
 void uart_send_uint32(uint32_t value);
-void uart_send_path_tracking_debug(void);
 void uart_send_pose(void);
 void uart_send_origin(void);
-// void process_uart_command(char *line);
+void process_uart_command(char *line);
 void process_pathfinder_control(float dt_s);
 void sample_guidewire_sensors(void);
 void update_guidewire_origin_reference(void);
@@ -294,6 +293,145 @@ int parse_int_simple(const char *s, int *out)
     return 1;
 }
 
+static uint8_t text_equals(const char *a, const char *b)
+{
+    if ((a == NULL) || (b == NULL))
+    {
+        return 0u;
+    }
+
+    while ((*a != '\0') && (*b != '\0'))
+    {
+        if (*a != *b)
+        {
+            return 0u;
+        }
+        a++;
+        b++;
+    }
+
+    return ((*a == '\0') && (*b == '\0')) ? 1u : 0u;
+}
+
+static int split_csv_fields(char *line, char **fields, int max_fields)
+{
+    int count = 0;
+
+    if ((line == NULL) || (fields == NULL) || (max_fields <= 0))
+    {
+        return 0;
+    }
+
+    fields[count++] = line;
+
+    while (*line != '\0')
+    {
+        if (*line == ',')
+        {
+            *line = '\0';
+            if (count < max_fields)
+            {
+                fields[count++] = line + 1;
+            }
+        }
+        line++;
+    }
+
+    return count;
+}
+
+void process_uart_command(char *line)
+{
+    char original_line[sizeof(rx_pending_buf)];
+    char *tokens[4];
+    int token_count = 0;
+    int parsed_value;
+    uint16_t i = 0u;
+
+    if ((line == NULL) || (*line == '\0'))
+    {
+        return;
+    }
+
+    while ((i < (uint16_t)(sizeof(original_line) - 1u)) && (line[i] != '\0'))
+    {
+        original_line[i] = line[i];
+        i++;
+    }
+    original_line[i] = '\0';
+
+    token_count = split_csv_fields(line, tokens, (int)(sizeof(tokens) / sizeof(tokens[0])));
+
+    if (token_count <= 0)
+    {
+        return;
+    }
+
+    if (text_equals(tokens[0], "PATH_BEGIN"))
+    {
+        if ((token_count >= 2) &&
+            parse_int_simple(tokens[1], &parsed_value) &&
+            (parsed_value >= 0) &&
+            (parsed_value <= (int)PATH_MAX_WAYPOINTS))
+        {
+            path_count = (uint8_t)parsed_value;
+            path_current_index = 0u;
+            path_receiving = 1u;
+            path_loaded = 0u;
+            uart_send_line("PATH_ACK,BEGIN");
+        }
+        return;
+    }
+
+    if (text_equals(tokens[0], "WPT"))
+    {
+        int idx;
+        int x_cm;
+        int y_cm;
+
+        if ((token_count >= 4) &&
+            path_receiving &&
+            parse_int_simple(tokens[1], &idx) &&
+            parse_int_simple(tokens[2], &x_cm) &&
+            parse_int_simple(tokens[3], &y_cm) &&
+            (idx >= 0) &&
+            (idx < (int)PATH_MAX_WAYPOINTS) &&
+            (x_cm >= 0) &&
+            (x_cm <= 255) &&
+            (y_cm >= 0) &&
+            (y_cm <= 255))
+        {
+            path_x[idx] = (uint8_t)x_cm;
+            path_y[idx] = (uint8_t)y_cm;
+            if ((uint8_t)(idx + 1) > path_count)
+            {
+                path_count = (uint8_t)(idx + 1);
+            }
+            uart_send_text("RX_CMD,");
+            uart_send_line(original_line);
+        }
+        return;
+    }
+
+    if (text_equals(tokens[0], "PATH_END"))
+    {
+        if (path_receiving)
+        {
+            path_receiving = 0u;
+            path_loaded = (path_count > 0u) ? 1u : 0u;
+            path_current_index = 0u;
+            uart_send_line("PATH_ACK,LOADED");
+        }
+        return;
+    }
+
+    if (text_equals(tokens[0], "ZERO_YAW"))
+    {
+        yaw_zero_deg = yaw_deg;
+        uart_send_line("ZERO_YAW_ACK,OK");
+    }
+}
+
 void reset_pose_origin(void)
 {
     pose_x_cm = 0.0f;
@@ -359,7 +497,6 @@ int main(void)
       while (1)
       {
           HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
-          uart_send_line("MiniMU init failed");
           HAL_Delay(1000);
       }
   }
@@ -369,12 +506,9 @@ int main(void)
       while (1)
       {
           HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
-          uart_send_line("Gyro calibration failed");
           HAL_Delay(1000);
       }
   }
-
-  uart_send_line("Streaming accel + gyro + angles");
 
   reset_pose_origin();
   last_imu_update_ms = HAL_GetTick();
@@ -397,17 +531,30 @@ int main(void)
         ir_rx_ready = 0u;
         HandleCommand(ir_rx_frame.cmd, ir_rx_frame.val);
     }
+
+    if (rx_line_ready)
+    {
+        char line_buf[sizeof(rx_pending_buf)];
+        uint16_t copy_len = rx_pending_len;
+        uint16_t i;
+
+        if (copy_len >= sizeof(line_buf))
+        {
+            copy_len = (uint16_t)(sizeof(line_buf) - 1u);
+        }
+
+        for (i = 0u; i < copy_len; i++)
+        {
+            line_buf[i] = (char)rx_pending_buf[i];
+        }
+        line_buf[copy_len] = '\0';
+        rx_pending_len = 0u;
+        rx_line_ready = 0u;
+        process_uart_command(line_buf);
+    }
+
     IR_RX_Update();
 
-    static uint32_t last_state_print_ms = 0;
-    if (now_ms - last_state_print_ms >= 500u) {
-        last_state_print_ms = now_ms;
-        const char *ctrl_str = (controller_state == STATE_CONFIG) ? "CONFIG" :
-                               (controller_state == STATE_DRIVE)  ? "DRIVE"  : "PAUSE";
-        const char *car_str  = (car_state == STATE_FIELD_TRACKING)  ? "FIELD" :
-                               (car_state == STATE_REMOTE)           ? "REMOTE" : "PATH";
-        printf("[STATE] ctrl=%s  car=%s\r\n", ctrl_str, car_str);
-    }
     /*--------------------------------------------------------------------------*/
     // Collision Detection
     /*--------------------------------------------------------------------------*/
@@ -422,7 +569,7 @@ int main(void)
       } else {
           current_distance = 8190;
       }
-      printf("[DIST] raw=%u  used=%u\r\n", reading, current_distance);
+      //printf("[DIST] raw=%u  used=%u\r\n", reading, current_distance);
     }
 
     if (current_distance < 100u)
@@ -530,8 +677,7 @@ void IR_Debug_Update(void)
     /* RX: decode every received frame and dispatch to HandleCommand */
     if (ir_rx_ready) {
         ir_rx_ready = 0u;
-        printf("[RX] addr=0x%X  cmd=%u  val=0x%04X\r\n",
-               ir_rx_frame.addr, ir_rx_frame.cmd, ir_rx_frame.val);
+        /* RX debug print intentionally disabled to save flash. */
         HandleCommand(ir_rx_frame.cmd, ir_rx_frame.val);
     }
 }
@@ -539,7 +685,7 @@ void IR_Debug_Update(void)
 /* ── IR command handler ─────────────────────────────────────────────────── */
 void path_tracking(void){
   sample_guidewire_sensors();
-  printf("%d\n", my_tracking_states);
+  //printf("%d\n", my_tracking_states);
   
   switch(my_tracking_states){
     case Running:
@@ -882,26 +1028,6 @@ void uart_send_uint32(uint32_t value)
     }
 }
 
-void uart_send_path_tracking_debug(void)
-{
-    static uint32_t last_path_debug_ms = 0u;
-    uint32_t now_ms = HAL_GetTick();
-
-    if ((now_ms - last_path_debug_ms) < 100u)
-    {
-        return;
-    }
-
-    last_path_debug_ms = now_ms;
-    uart_send_text("v_front=");
-    uart_send_uint32(v_front);
-    uart_send_text(" v_left=");
-    uart_send_uint32(v_left);
-    uart_send_text(" v_right=");
-    uart_send_uint32(v_right);
-    uart_send_text("\r\n");
-}
-
 void uart_send_origin(void)
 {
     uart_send_line("ORIGIN,0,0");
@@ -959,6 +1085,7 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 
 void process_pathfinder_control(float dt_s)
 {
+    static uint32_t last_path_control_debug_ms = 0u;
     float target_x;
     float target_y;
     float dx;
@@ -1037,6 +1164,21 @@ void process_pathfinder_control(float dt_s)
     Set_Left_Motor(left_cmd);
     Set_Right_Motor(right_cmd);
 
+    if ((HAL_GetTick() - last_path_control_debug_ms) >= 200u)
+    {
+        last_path_control_debug_ms = HAL_GetTick();
+        printf("[PATH_CTRL] mode=%u state=%u idx=%u/%u\r\n",
+               ir_mode, car_state, path_current_index, path_count);
+        printf("[PATH_CTRL] pose=(%.2f,%.2f) yaw=%.2f zero=%.2f\r\n",
+               pose_x_cm, pose_y_cm, yaw_deg, yaw_zero_deg);
+        printf("[PATH_CTRL] target=(%.2f,%.2f) dx=%.2f dy=%.2f dist=%.2f\r\n",
+               target_x, target_y, dx, dy, distance_cm);
+        printf("[PATH_CTRL] heading=%.2f target=%.2f err=%.2f steer=%d\r\n",
+               current_heading_deg, target_heading_deg, heading_error_deg, steer_cmd);
+        printf("[PATH_CTRL] drive=%d scaled=%d left=%d right=%d\r\n",
+               drive_cmd, current_drive_cmd, left_cmd, right_cmd);
+    }
+
     (void)dt_s;
 }
 
@@ -1053,7 +1195,6 @@ void i2c_scan(void)
     {
         if (probe_addr(addr))
         {
-            uart_send_line("I2C device found");
         }
     }
 }
