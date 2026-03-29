@@ -923,7 +923,7 @@ void handle_intersection_turning(void){
       break;
 
     case Stop:
-      my_tracking_states = Resting;
+      my_tracking_states = Intersection_stop;
       intersection_leave_time = HAL_GetTick();
       break;
   }  
@@ -1580,6 +1580,12 @@ void HandleCommand(uint8_t cmd_name, uint16_t val)
       ir_joystick_y = IR_JOYSTICK_CENTER_Y;
       ir_mode       = IR_MODE_FIELD;
       ir_path       = IR_PATH_1;
+
+      // Adding these variable resets 
+      intersection_number = 0;
+      my_tracking_states = Running;
+      front_inductor_ready = 1;
+      
       break;
 
     case IR_CMD_MODE:
