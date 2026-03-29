@@ -104,7 +104,7 @@ uint8_t path_receiving = 0u;
 uint8_t path_loaded = 0u;
 
 // Vehicle Control 
-enum path_tracking_states my_tracking_states = Running;
+enum path_tracking_states my_tracking_states = Resting;
 volatile uint16_t ir_joystick_x = IR_JOYSTICK_CENTER_X;
 volatile uint16_t ir_joystick_y = IR_JOYSTICK_CENTER_Y;
 
@@ -168,6 +168,7 @@ void SystemClock_Config(void);
 void IR_Debug_Update(void);
 void Set_Left_Motor(int speed);
 void Set_Right_Motor(int speed);
+void handle_resting(void);
 void handle_intersection_encountered(void);
 void handle_intersection_turning(void);
 void path_tracking(void);
@@ -539,9 +540,13 @@ void IR_Debug_Update(void)
 /* ── IR command handler ─────────────────────────────────────────────────── */
 void path_tracking(void){
   sample_guidewire_sensors();
-  printf("%d\n", my_tracking_states);
+  printf("vl: %d, vr: %d, vf: %d\n", adc0, adc1, adc9);
   
   switch(my_tracking_states){
+    case Resting:
+      handle_resting();
+      break;
+
     case Running:
       handle_line_tracking();
       break;
@@ -578,6 +583,19 @@ void sample_guidewire_sensors(void)
   v_left = adc_to_voltage(adc0);
   v_right = adc_to_voltage(adc9);
   v_front = adc_to_voltage(adc1);
+}
+
+void handle_resting(void){
+  Set_Left_Motor(0);
+  Set_Right_Motor(0);
+  intersection_number = 0;
+
+  if (controller_state == STATE_DRIVE){
+    my_tracking_states = Running;
+  }
+  else{
+    my_tracking_states = Resting;
+  }
 }
 
 void update_guidewire_origin_reference(void)
@@ -742,7 +760,7 @@ void handle_intersection_turning(void){
       break;
 
     case Stop:
-      my_tracking_states = Intersection_stop;
+      my_tracking_states = Resting;
       intersection_leave_time = HAL_GetTick();
       break;
   }  
@@ -764,7 +782,10 @@ void handle_intersection_turn_settle(void){
 void handle_intersection_stop(void){
   Set_Left_Motor(0);
   Set_Right_Motor(0);
-  my_tracking_states = Intersection_stop;
+  intersection_number = 0;
+  ir_running = 0;
+  controller_state = STATE_CONFIG;
+  my_tracking_states = Resting;
 }
 
 void motor_remote_control(uint16_t x, uint16_t y){
