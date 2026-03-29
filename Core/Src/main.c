@@ -17,13 +17,14 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <stdio.h>
 #include <string.h>
 #include <math.h>
 #include <stdlib.h>
 #include "ir_rx.h"
 #include "ir_tx.h"
 #include "config.h"
+#include "datatypes.h"
+#include "vl53l0x.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -33,60 +34,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
-// IMU Registers 
-#define LSM6DS33_ADDR_HIGH        0x6B
-#define LSM6DS33_ADDR_LOW         0x6A
-
-#define LSM6DS33_WHO_AM_I_REG     0x0F
-#define LSM6DS33_CTRL1_XL         0x10
-#define LSM6DS33_CTRL2_G          0x11
-#define LSM6DS33_CTRL3_C          0x12
-
-#define LSM6DS33_OUTX_L_G         0x22
-#define LSM6DS33_OUTX_L_XL        0x28
-
-#define LSM6DS33_WHO_AM_I_VAL     0x69
-
-// IMU Values
-#define GYRO_SENS_DPS_PER_LSB     0.00875f
-
-#define GYRO_CAL_SAMPLES          200
-#define RAD_TO_DEG                57.2957795f
-
-// Vehicle Control 
-// needed to be tuned !!!
-#define KP 0.015f // how much the car turns to fix itself
-#define KS 0.015f // how much the car reduces speed when turning
-#define KF 0.020f // decrease speed before approaching the intersection
-//-------- base power of motor in auto mode -----------------
-#define PB 75
-#define STOP_VF 1500
-#define LEFT_TURN_DEGREE -88
-#define RIGHT_TURN_DEGREE 88
-#define INTERSECTION_COMPENSATION_TIME 375
-#define INTERSECTION_TURN_SETTLE_TIME 250
-
-//For sensor
-#define VL53L0X_I2C_ADDR 0x52 
-
-// ms it takes for the car to rotate one full circle at 60% power
-#define IMU_UPDATE_PERIOD_MS      20u
-#define POSE_STREAM_PERIOD_MS     100u
-#define PATH_MAX_WAYPOINTS        32u
-#define PATH_REACHED_TOLERANCE_CM 8.0f
-#define DRIVE_SPEED_SCALE_CM_S    0.35f
-#define PATH_FORWARD_SPEED        40
-#define PATH_APPROACH_SPEED       25
-#define PATH_STEER_GAIN           1.0f
-#define PATH_MAX_STEER_CMD        55
-#define MOTOR_TEST_SPEED          40
-#define IR_JOYSTICK_CENTER_X      165u
-#define IR_JOYSTICK_CENTER_Y      170u
-#define GUIDEWIRE_FRONT_THRESHOLD_MV    1000u
-#define GUIDEWIRE_BALANCE_TOLERANCE_MV   150u
-#define GUIDEWIRE_LOCK_SAMPLES_REQUIRED    5u
-#define GUIDEWIRE_SAMPLE_PERIOD_MS        20u
 
 /* USER CODE END PD */
 
@@ -135,7 +82,6 @@ static int current_right_motor_cmd = 0;
 static int current_drive_cmd = 0;
 static uint32_t last_imu_update_ms = 0u;
 static uint32_t last_pose_stream_ms = 0u;
-static uint32_t last_motor_debug_ms = 0u;
 static uint8_t origin_sent = 0u;
 static uint32_t last_guidewire_sample_ms = 0u;
 static uint8_t guidewire_origin_locked = 0u;
@@ -148,24 +94,22 @@ volatile uint16_t rx_pending_len = 0u;
 volatile uint8_t rx_line_ready = 0u;
 uint8_t uart_rx_byte = 0u;
 
+// path tracking variables
 float path_x[PATH_MAX_WAYPOINTS];
 float path_y[PATH_MAX_WAYPOINTS];
 uint8_t path_count = 0u;
 uint8_t path_current_index = 0u;
 uint8_t path_receiving = 0u;
 uint8_t path_loaded = 0u;
-uint8_t path_ready = 0u;
-uint8_t motor_test_active = 0u;
 
 // Vehicle Control 
 enum path_tracking_states my_tracking_states = Running;
-volatile uint8_t ir_joystick_x = IR_JOYSTICK_CENTER_X;
-volatile uint8_t ir_joystick_y = IR_JOYSTICK_CENTER_Y;
+volatile uint16_t ir_joystick_x = IR_JOYSTICK_CENTER_X;
+volatile uint16_t ir_joystick_y = IR_JOYSTICK_CENTER_Y;
 
-
-volatile uint8_t ir_mode       = 0u;     
-volatile uint8_t ir_running    = 0u;    
-volatile uint8_t ir_path       = 0u;   
+volatile uint16_t ir_mode      = 0u;
+volatile uint8_t  ir_running   = 0u;
+volatile uint16_t ir_path      = 0x02u;
 volatile uint8_t ir_reset      = 0u; 
 
 // Inductor readings
@@ -220,14 +164,14 @@ CarState car_state = STATE_FIELD_TRACKING;
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 
-void IR_Debug_Update(void);
 void Set_Left_Motor(int speed);
 void Set_Right_Motor(int speed);
+void handle_resting(void);
 void handle_intersection_encountered(void);
 void handle_intersection_turning(void);
 void path_tracking(void);
 void handle_line_tracking(void);
-void motor_remote_control(uint8_t, uint8_t);
+void motor_remote_control(uint16_t, uint16_t);
 void Set_Car_Speed(int speed);
 void handle_intersection_stop(void);
 void handle_intersection_compensation(void);
@@ -236,8 +180,7 @@ void handle_intersection_turn_settle(void);
 // IMU 
 void uart_send_text(const char *s);
 void uart_send_line(const char *s);
-void uart_send_uint32(uint32_t value);
-void uart_send_path_tracking_debug(void);
+void uart_send_pose(void);
 void uart_send_origin(void);
 // void process_uart_command(char *line);
 void process_pathfinder_control(float dt_s);
@@ -270,6 +213,7 @@ void IMUUpdate(void); //MAIN IMU FUNCTION
 // State Machine Functions
 void ControllerStateMachine(void);
 void CarStateMachine(void);
+void HandleCommand(uint8_t cmd_name, uint16_t val);
 
 /* USER CODE END PFP */
 
@@ -384,6 +328,20 @@ int main(void)
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);
 
+  reset_pose_origin();
+  last_imu_update_ms = HAL_GetTick();
+  last_pose_stream_ms = last_imu_update_ms;
+  last_guidewire_sample_ms = last_imu_update_ms;
+  uart_send_origin();
+
+  // Configure ADC channel
+  HAL_ADCEx_Calibration_Start(&hadc, ADC_SINGLE_ENDED);
+  vdda_calibration();
+
+  // i2c init
+  VL53L0X_Init();
+
+  // IR init
   htim6.Instance->ARR = 262u;
   htim6.Instance->EGR = 0x01U;
   IR_RX_Init();
@@ -392,12 +350,35 @@ int main(void)
   IR_TX_Init();
   HAL_TIM_Base_Start_IT(&htim6);
   
+  // IMU init
+  if (!MiniMU_Init())
+  {
+      while (1)
+      {
+          HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
+          uart_send_line("MiniMU init failed");
+          HAL_Delay(1000);
+      }
+  }
+
+  if (!MiniMU_CalibrateGyro())
+  {
+      while (1)
+      {
+          HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
+          uart_send_line("Gyro calibration failed");
+          HAL_Delay(1000);
+      }
+  }
+
+  uart_send_line("Streaming accel + gyro + angles");
+
   reset_pose_origin();
   last_imu_update_ms = HAL_GetTick();
   last_pose_stream_ms = last_imu_update_ms;
   last_guidewire_sample_ms = last_imu_update_ms;
   uart_send_origin();
-  
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -408,7 +389,13 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     now_ms = HAL_GetTick();
-    IR_Debug_Update(); // IR debug function
+
+    if (ir_rx_ready) {
+        ir_rx_ready = 0u;
+        HandleCommand(ir_rx_frame.cmd, ir_rx_frame.val);
+    }
+    IR_RX_Update();
+
     /*--------------------------------------------------------------------------*/
     // Collision Detection
     /*--------------------------------------------------------------------------*/
@@ -418,10 +405,10 @@ int main(void)
     if (HAL_GetTick() - last_dist_ms >= 100u) {
       last_dist_ms = HAL_GetTick();
       uint16_t reading = VL53L0X_ReadDistance();
-      if (reading != 0xFFFFu) { // 0xFFFF means error or sensor not ready
+      if (reading != 0xFFFFu) {
           current_distance = reading;
       } else {
-          current_distance = 8190; // Default to max range on error i think
+          current_distance = 8190;
       }
     }
 
@@ -525,30 +512,15 @@ void Set_Right_Motor(int speed){
 
 
 /* TX addr=0x7 continuously, print any received addr=0x6 frame. */
-void IR_Debug_Update(void)
-{
-    /* TX: keep sending addr=0x7 frames every 100 ms */
-    static uint32_t last_tx_ms = 0;
-    static uint8_t  tx_reg     = 0;
-
-    if (!IR_TX_Busy() && (HAL_GetTick() - last_tx_ms) >= 100u) {
-        last_tx_ms = HAL_GetTick();
-        IR_Send_IMU(tx_reg, 0xABCD);
-        tx_reg = (tx_reg + 1u) % IMU_REG_COUNT;
-    }
-    /* RX: print every frame received with addr=0x6 */
-    if (ir_rx_ready) {
-        ir_rx_ready = 0u;
-        printf("[RX] addr=0x%X  cmd=%u  val=0x%04X\r\n",
-               ir_rx_frame.addr, ir_rx_frame.cmd, ir_rx_frame.val);
-    }
-}
-
 /* ── IR command handler ─────────────────────────────────────────────────── */
 void path_tracking(void){
   sample_guidewire_sensors();
   
   switch(my_tracking_states){
+    case Resting:
+      handle_resting();
+      break;
+
     case Running:
       handle_line_tracking();
       break;
@@ -585,6 +557,19 @@ void sample_guidewire_sensors(void)
   v_left = adc_to_voltage(adc0);
   v_right = adc_to_voltage(adc9);
   v_front = adc_to_voltage(adc1);
+}
+
+void handle_resting(void){
+  Set_Left_Motor(0);
+  Set_Right_Motor(0);
+  intersection_number = 0;
+
+  if (controller_state == STATE_DRIVE){
+    my_tracking_states = Running;
+  }
+  else{
+    my_tracking_states = Resting;
+  }
 }
 
 void update_guidewire_origin_reference(void)
@@ -626,7 +611,7 @@ void handle_line_tracking(void){
   int left_power;
   int right_power;
   uint32_t line_tracking_current_time = HAL_GetTick();
-  if(line_tracking_current_time - intersection_leave_time > 3000){
+  if(line_tracking_current_time - intersection_leave_time > INTERSECTION_REARM_TIME_MS){
     front_inductor_ready = 1;
   }
 
@@ -655,7 +640,6 @@ void handle_line_tracking(void){
     my_tracking_states = Running;
   }
 
-  //printf("left_power: %d; right_power: %d\n", left_power, right_power);
   Set_Left_Motor(left_power);
   Set_Right_Motor(right_power);
 
@@ -663,15 +647,41 @@ void handle_line_tracking(void){
 }
 
 void handle_intersection_encountered(void){
-  Set_Left_Motor(0);
-  Set_Right_Motor(0);
   intersection_number += 1;
-  //my_tracking_states = Intersection_turning;
-  my_tracking_states = Intersection_compensation;
-  intersection_encountered_time = HAL_GetTick();
-  //last_intersection_turning_time = HAL_GetTick();
-  //intersection_turn_current_yaw_angle = 0;
-  //front_inductor_ready = 0;
+  enum intersection_directions current_direction;
+  switch(ir_path){
+    case IR_PATH_1:
+      current_direction = path1[intersection_number-1];
+      break;
+    
+    case IR_PATH_2:
+      current_direction = path2[intersection_number-1];
+      break;
+
+    case IR_PATH_3:
+      current_direction = path3[intersection_number-1];
+      break;
+    
+    default:
+      current_direction = Stop;
+      break;
+  }
+
+  if(current_direction == Forward){ 
+    my_tracking_states = Intersection_turning;
+    //intersection_leave_time = HAL_GetTick();
+    front_inductor_ready = 0;
+  }
+  else{
+    Set_Left_Motor(0);
+    Set_Right_Motor(0);
+    //my_tracking_states = Intersection_turning;
+    my_tracking_states = Intersection_compensation;
+    intersection_encountered_time = HAL_GetTick();
+    //last_intersection_turning_time = HAL_GetTick();
+    //intersection_turn_current_yaw_angle = 0;
+    //front_inductor_ready = 0;
+  }
 }
 
 void handle_intersection_compensation(void){
@@ -722,8 +732,8 @@ void handle_intersection_turning(void){
 
     case Left:
       if(intersection_turn_current_yaw_angle > LEFT_TURN_DEGREE){
-        Set_Left_Motor(-65); 
-        Set_Right_Motor(65);
+        Set_Left_Motor(-TURNING_SPEED); 
+        Set_Right_Motor(TURNING_SPEED);
         my_tracking_states = Intersection_turning;  
       }
       else{
@@ -736,8 +746,8 @@ void handle_intersection_turning(void){
     
     case Right:
       if(intersection_turn_current_yaw_angle < RIGHT_TURN_DEGREE){
-        Set_Left_Motor(65);
-        Set_Right_Motor(-65);
+        Set_Left_Motor(TURNING_SPEED);
+        Set_Right_Motor(-TURNING_SPEED);
         my_tracking_states = Intersection_turning;  
       }
       else{
@@ -749,7 +759,7 @@ void handle_intersection_turning(void){
       break;
 
     case Stop:
-      my_tracking_states = Intersection_stop;
+      my_tracking_states = Resting;
       intersection_leave_time = HAL_GetTick();
       break;
   }  
@@ -771,23 +781,26 @@ void handle_intersection_turn_settle(void){
 void handle_intersection_stop(void){
   Set_Left_Motor(0);
   Set_Right_Motor(0);
-  my_tracking_states = Intersection_stop;
+  intersection_number = 0;
+  ir_running = 0;
+  controller_state = STATE_CONFIG;
+  my_tracking_states = Resting;
 }
 
-void motor_remote_control(uint8_t x, uint8_t y){
+void motor_remote_control(uint16_t x, uint16_t y){
   int x_in;
   int y_in;
   int left_power;
   int right_power;
-  
-  if(x >= 165){
+
+  if(x >= 165u){
     x_in = (((int)x - 165) * 100) / 90;
   }
   else{
     x_in = (((int)x - 165) * 100) / 165;
   }
-  
-  if(y >= 170){
+
+  if(y >= 170u){
     y_in = (((int)y - 170) * 100) / 85;
   }
   else{
@@ -815,54 +828,6 @@ void motor_remote_control(uint8_t x, uint8_t y){
   
   Set_Left_Motor(left_power);
   Set_Right_Motor(right_power);
-}
-
-/* ── IR command handler — called from ISR context (TIM6 tick) ───────────── */
-/* Keep this function short: no blocking calls, no printf.                    */
-void HandleCommand(uint8_t cmd_name, uint8_t data)
-{
-  switch (cmd_name)
-  {
-    case IR_CMD_START:
-      motor_test_active = 0u;
-      ir_running = 1u;
-      break;
-
-    case IR_CMD_PAUSE:
-      motor_test_active = 0u;
-      ir_running = 0u;
-      path_ready = 0u;
-      break;
-
-    case IR_CMD_RESET:
-      motor_test_active = 0u;
-      ir_running    = 0u;
-      path_ready    = 0u;
-      ir_joystick_x = IR_JOYSTICK_CENTER_X;
-      ir_joystick_y = IR_JOYSTICK_CENTER_Y;
-      ir_mode       = IR_MODE_FIELD;
-      ir_path       = IR_PATH_1;
-      break;
-
-    case IR_CMD_MODE:
-      ir_mode = data;   /* IR_MODE_FIELD / IR_MODE_REMOTE / IR_MODE_PATH */
-      break;
-
-    case IR_CMD_PATH:
-      ir_path = data;   /* IR_PATH_1 / IR_PATH_2 / IR_PATH_3 */
-      break;
-
-    case IR_CMD_JOYSTICK_X:
-      ir_joystick_x = data;
-      break;
-
-    case IR_CMD_JOYSTICK_Y:
-      ir_joystick_y = data;
-      break;
-
-    default:
-      break;
-  }
 }
 
 void Set_Car_Speed(int speed){
@@ -896,6 +861,12 @@ void Set_Car_Speed(int speed){
   }
 }
 
+int __io_putchar(int ch)
+{
+    HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1u, HAL_MAX_DELAY);
+    return ch;
+}
+
 void uart_send_text(const char *s)
 {
     HAL_UART_Transmit(&huart1, (uint8_t *)s, (uint16_t)strlen(s), HAL_MAX_DELAY);
@@ -904,50 +875,6 @@ void uart_send_text(const char *s)
 void uart_send_line(const char *s)
 {
     uart_send_text(s);
-    uart_send_text("\r\n");
-}
-
-void uart_send_uint32(uint32_t value)
-{
-    char buf[10];
-    int i = 0;
-
-    if (value == 0u)
-    {
-        uart_send_text("0");
-        return;
-    }
-
-    while ((value > 0u) && (i < (int)sizeof(buf)))
-    {
-        buf[i++] = (char)('0' + (value % 10u));
-        value /= 10u;
-    }
-
-    while (i > 0)
-    {
-        i--;
-        HAL_UART_Transmit(&huart1, (uint8_t *)&buf[i], 1u, HAL_MAX_DELAY);
-    }
-}
-
-void uart_send_path_tracking_debug(void)
-{
-    static uint32_t last_path_debug_ms = 0u;
-    uint32_t now_ms = HAL_GetTick();
-
-    if ((now_ms - last_path_debug_ms) < 100u)
-    {
-        return;
-    }
-
-    last_path_debug_ms = now_ms;
-    uart_send_text("v_front=");
-    uart_send_uint32(v_front);
-    uart_send_text(" v_left=");
-    uart_send_uint32(v_left);
-    uart_send_text(" v_right=");
-    uart_send_uint32(v_right);
     uart_send_text("\r\n");
 }
 
@@ -1022,14 +949,8 @@ void process_pathfinder_control(float dt_s)
     int left_cmd;
     int right_cmd;
 
-    if (!path_ready || (path_count == 0u))
-    {
-        return;
-    }
-
     if (path_current_index >= path_count)
     {
-        path_ready = 0u;
         current_drive_cmd = 0;
         Set_Left_Motor(0);
         Set_Right_Motor(0);
@@ -1050,7 +971,6 @@ void process_pathfinder_control(float dt_s)
         path_current_index++;
         if (path_current_index >= path_count)
         {
-            path_ready = 0u;
             current_drive_cmd = 0;
             Set_Left_Motor(0);
             Set_Right_Motor(0);
@@ -1149,12 +1069,6 @@ uint8_t MiniMU_FindIMU(void)
 
 uint8_t MiniMU_Init(void)
 {
-    uint8_t who = 0;
-    uint8_t ctrl1 = 0;
-    uint8_t ctrl2 = 0;
-    uint8_t ctrl3 = 0;
-    char msg[96];
-
     i2c_scan();
 
     if (!MiniMU_FindIMU())
@@ -1165,7 +1079,6 @@ uint8_t MiniMU_Init(void)
     imu_write_reg(LSM6DS33_CTRL1_XL, 0x40);
     imu_write_reg(LSM6DS33_CTRL2_G, 0x40);
     imu_write_reg(LSM6DS33_CTRL3_C, 0x44);
-
 
     return 1;
 }
@@ -1308,8 +1221,7 @@ void ControllerStateMachine(void)
         controller_state = STATE_PAUSE;
       }
       else
-      {
-        
+      { 
         CarStateMachine();
       }
       break;
@@ -1373,6 +1285,49 @@ void CarStateMachine(void)
       Set_Left_Motor(0);
       Set_Right_Motor(0);
       car_state = STATE_FIELD_TRACKING;
+      break;
+  }
+}
+
+/* ── IR command handler — called from main loop on each decoded IR frame ─── */
+/* Keep this function short: no blocking calls, no printf.                    */
+void HandleCommand(uint8_t cmd_name, uint16_t val)
+{
+  switch (cmd_name)
+  {
+    case IR_CMD_START:
+      ir_running = 1u;
+      break;
+
+    case IR_CMD_PAUSE:
+      ir_running = 0u;
+      break;
+
+    case IR_CMD_RESET:
+      ir_reset = 1u;
+      ir_joystick_x = IR_JOYSTICK_CENTER_X;
+      ir_joystick_y = IR_JOYSTICK_CENTER_Y;
+      ir_mode       = IR_MODE_FIELD;
+      ir_path       = IR_PATH_1;
+      break;
+
+    case IR_CMD_MODE:
+      ir_mode = val;
+      break;
+
+    case IR_CMD_PATH:
+      ir_path = val;
+      break;
+
+    case IR_CMD_JOYSTICK_X:
+      ir_joystick_x = val;
+      break;
+
+    case IR_CMD_JOYSTICK_Y:
+      ir_joystick_y = val;
+      break;
+
+    default:
       break;
   }
 }
