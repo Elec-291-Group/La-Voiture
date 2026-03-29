@@ -17,7 +17,6 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <stdio.h>
 #include <string.h>
 #include <math.h>
 #include <stdlib.h>
@@ -104,13 +103,13 @@ uint8_t path_receiving = 0u;
 uint8_t path_loaded = 0u;
 
 // Vehicle Control 
-enum path_tracking_states my_tracking_states = Resting;
+enum path_tracking_states my_tracking_states = Running;
 volatile uint16_t ir_joystick_x = IR_JOYSTICK_CENTER_X;
 volatile uint16_t ir_joystick_y = IR_JOYSTICK_CENTER_Y;
 
 volatile uint16_t ir_mode      = 0u;
 volatile uint8_t  ir_running   = 0u;
-volatile uint16_t ir_path      = 0u;
+volatile uint16_t ir_path      = 0x02u;
 volatile uint8_t ir_reset      = 0u; 
 
 // Inductor readings
@@ -165,7 +164,6 @@ CarState car_state = STATE_FIELD_TRACKING;
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 
-void IR_Debug_Update(void);
 void Set_Left_Motor(int speed);
 void Set_Right_Motor(int speed);
 void handle_resting(void);
@@ -182,8 +180,6 @@ void handle_intersection_turn_settle(void);
 // IMU 
 void uart_send_text(const char *s);
 void uart_send_line(const char *s);
-void uart_send_uint32(uint32_t value);
-void uart_send_path_tracking_debug(void);
 void uart_send_pose(void);
 void uart_send_origin(void);
 // void process_uart_command(char *line);
@@ -400,15 +396,6 @@ int main(void)
     }
     IR_RX_Update();
 
-    static uint32_t last_state_print_ms = 0;
-    if (now_ms - last_state_print_ms >= 500u) {
-        last_state_print_ms = now_ms;
-        const char *ctrl_str = (controller_state == STATE_CONFIG) ? "CONFIG" :
-                               (controller_state == STATE_DRIVE)  ? "DRIVE"  : "PAUSE";
-        const char *car_str  = (car_state == STATE_FIELD_TRACKING)  ? "FIELD" :
-                               (car_state == STATE_REMOTE)           ? "REMOTE" : "PATH";
-        printf("[STATE] ctrl=%s  car=%s\r\n", ctrl_str, car_str);
-    }
     /*--------------------------------------------------------------------------*/
     // Collision Detection
     /*--------------------------------------------------------------------------*/
@@ -423,7 +410,6 @@ int main(void)
       } else {
           current_distance = 8190;
       }
-      printf("[DIST] raw=%u  used=%u\r\n", reading, current_distance);
     }
 
     if (current_distance < 100u)
@@ -526,21 +512,9 @@ void Set_Right_Motor(int speed){
 
 
 /* TX addr=0x7 continuously, print any received addr=0x6 frame. */
-void IR_Debug_Update(void)
-{
-    /* RX: decode every received frame and dispatch to HandleCommand */
-    if (ir_rx_ready) {
-        ir_rx_ready = 0u;
-        printf("[RX] addr=0x%X  cmd=%u  val=0x%04X\r\n",
-               ir_rx_frame.addr, ir_rx_frame.cmd, ir_rx_frame.val);
-        HandleCommand(ir_rx_frame.cmd, ir_rx_frame.val);
-    }
-}
-
 /* ── IR command handler ─────────────────────────────────────────────────── */
 void path_tracking(void){
   sample_guidewire_sensors();
-  printf("vl: %d, vr: %d, vf: %d\n", adc0, adc1, adc9);
   
   switch(my_tracking_states){
     case Resting:
@@ -637,7 +611,7 @@ void handle_line_tracking(void){
   int left_power;
   int right_power;
   uint32_t line_tracking_current_time = HAL_GetTick();
-  if(line_tracking_current_time - intersection_leave_time > 3000){
+  if(line_tracking_current_time - intersection_leave_time > INTERSECTION_REARM_TIME_MS){
     front_inductor_ready = 1;
   }
 
@@ -666,7 +640,6 @@ void handle_line_tracking(void){
     my_tracking_states = Running;
   }
 
-  //printf("left_power: %d; right_power: %d\n", left_power, right_power);
   Set_Left_Motor(left_power);
   Set_Right_Motor(right_power);
 
@@ -674,15 +647,41 @@ void handle_line_tracking(void){
 }
 
 void handle_intersection_encountered(void){
-  Set_Left_Motor(0);
-  Set_Right_Motor(0);
   intersection_number += 1;
-  //my_tracking_states = Intersection_turning;
-  my_tracking_states = Intersection_compensation;
-  intersection_encountered_time = HAL_GetTick();
-  //last_intersection_turning_time = HAL_GetTick();
-  //intersection_turn_current_yaw_angle = 0;
-  //front_inductor_ready = 0;
+  enum intersection_directions current_direction;
+  switch(ir_path){
+    case IR_PATH_1:
+      current_direction = path1[intersection_number-1];
+      break;
+    
+    case IR_PATH_2:
+      current_direction = path2[intersection_number-1];
+      break;
+
+    case IR_PATH_3:
+      current_direction = path3[intersection_number-1];
+      break;
+    
+    default:
+      current_direction = Stop;
+      break;
+  }
+
+  if(current_direction == Forward){ 
+    my_tracking_states = Intersection_turning;
+    //intersection_leave_time = HAL_GetTick();
+    front_inductor_ready = 0;
+  }
+  else{
+    Set_Left_Motor(0);
+    Set_Right_Motor(0);
+    //my_tracking_states = Intersection_turning;
+    my_tracking_states = Intersection_compensation;
+    intersection_encountered_time = HAL_GetTick();
+    //last_intersection_turning_time = HAL_GetTick();
+    //intersection_turn_current_yaw_angle = 0;
+    //front_inductor_ready = 0;
+  }
 }
 
 void handle_intersection_compensation(void){
@@ -733,8 +732,8 @@ void handle_intersection_turning(void){
 
     case Left:
       if(intersection_turn_current_yaw_angle > LEFT_TURN_DEGREE){
-        Set_Left_Motor(-65); 
-        Set_Right_Motor(65);
+        Set_Left_Motor(-TURNING_SPEED); 
+        Set_Right_Motor(TURNING_SPEED);
         my_tracking_states = Intersection_turning;  
       }
       else{
@@ -747,8 +746,8 @@ void handle_intersection_turning(void){
     
     case Right:
       if(intersection_turn_current_yaw_angle < RIGHT_TURN_DEGREE){
-        Set_Left_Motor(65);
-        Set_Right_Motor(-65);
+        Set_Left_Motor(TURNING_SPEED);
+        Set_Right_Motor(-TURNING_SPEED);
         my_tracking_states = Intersection_turning;  
       }
       else{
@@ -876,50 +875,6 @@ void uart_send_text(const char *s)
 void uart_send_line(const char *s)
 {
     uart_send_text(s);
-    uart_send_text("\r\n");
-}
-
-void uart_send_uint32(uint32_t value)
-{
-    char buf[10];
-    int i = 0;
-
-    if (value == 0u)
-    {
-        uart_send_text("0");
-        return;
-    }
-
-    while ((value > 0u) && (i < (int)sizeof(buf)))
-    {
-        buf[i++] = (char)('0' + (value % 10u));
-        value /= 10u;
-    }
-
-    while (i > 0)
-    {
-        i--;
-        HAL_UART_Transmit(&huart1, (uint8_t *)&buf[i], 1u, HAL_MAX_DELAY);
-    }
-}
-
-void uart_send_path_tracking_debug(void)
-{
-    static uint32_t last_path_debug_ms = 0u;
-    uint32_t now_ms = HAL_GetTick();
-
-    if ((now_ms - last_path_debug_ms) < 100u)
-    {
-        return;
-    }
-
-    last_path_debug_ms = now_ms;
-    uart_send_text("v_front=");
-    uart_send_uint32(v_front);
-    uart_send_text(" v_left=");
-    uart_send_uint32(v_left);
-    uart_send_text(" v_right=");
-    uart_send_uint32(v_right);
     uart_send_text("\r\n");
 }
 

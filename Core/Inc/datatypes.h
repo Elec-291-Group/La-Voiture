@@ -20,16 +20,18 @@
 
 // Vehicle Control 
 // needed to be tuned !!!
-#define KP 0.015f // how much the car turns to fix itself
-#define KS 0.015f // how much the car reduces speed when turning
+#define KP 0.028f // how much the car turns to fix itself ======= used to be 0.015 ======
+#define KS 0.02f // how much the car reduces speed when turning
 #define KF 0.020f // decrease speed before approaching the intersection
-//-------- base power of motor in auto mode -----------------
-#define PB 75
-#define STOP_VF 1500
-#define LEFT_TURN_DEGREE -88
-#define RIGHT_TURN_DEGREE 88
-#define INTERSECTION_COMPENSATION_TIME 375
-#define INTERSECTION_TURN_SETTLE_TIME 250
+
+#define PB 100 // base power in field tracking mode. ======= used to be 75 ========
+#define STOP_VF 1300
+#define LEFT_TURN_DEGREE -80
+#define RIGHT_TURN_DEGREE 86
+#define TURNING_SPEED 100 // speed when turning at intersections. ====== used to be 65 ======
+#define INTERSECTION_COMPENSATION_TIME 300
+#define INTERSECTION_TURN_SETTLE_TIME 200
+#define INTERSECTION_REARM_TIME_MS 1200
 
 //For sensor
 #define VL53L0X_I2C_ADDR 0x52 
