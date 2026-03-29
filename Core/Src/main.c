@@ -111,7 +111,8 @@ volatile uint16_t ir_joystick_y = IR_JOYSTICK_CENTER_Y;
 volatile uint16_t ir_mode      = 0u;
 volatile uint8_t  ir_running   = 0u;
 volatile uint16_t ir_path      = 0u;
-volatile uint8_t ir_reset      = 0u; 
+volatile uint8_t ir_reset      = 0u; // 1 reset to config state
+volatile uint8_t ir_pause      = 0u;
 
 // Inductor readings
 uint16_t adc0;
@@ -526,12 +527,14 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     now_ms = HAL_GetTick();
-
+    
+    IR_RX_Update();
     if (ir_rx_ready) {
         ir_rx_ready = 0u;
         HandleCommand(ir_rx_frame.cmd, ir_rx_frame.val);
         printf("%u %u\n", ir_rx_frame.cmd, ir_rx_frame.val);
     }
+
     /*
     if (rx_line_ready)
     {
@@ -554,7 +557,6 @@ int main(void)
         process_uart_command(line_buf);
     }
     */
-    IR_RX_Update();
 
     /*--------------------------------------------------------------------------*/
     // Collision Detection
@@ -1377,21 +1379,30 @@ void ControllerStateMachine(void)
   switch (controller_state) 
   {
     case STATE_CONFIG:
+      printf("config\n");
       current_drive_cmd = 0;
-      ir_reset = 0;
+      //ir_reset = 0;
+      //ir_running = 0;
       Set_Left_Motor(0);
       Set_Right_Motor(0);
       if (ir_running)
       {
         controller_state = STATE_DRIVE;
+        ir_running = 0;
       }
       break;
 
     case STATE_DRIVE:
+      printf("drive\n");
       IMUUpdate();
-      if (!ir_running)
+      if (ir_pause)
       {
         controller_state = STATE_PAUSE;
+        ir_pause = 0;
+      }
+      else if (ir_reset) {
+        controller_state = STATE_CONFIG;
+        ir_reset;
       }
       else
       {
@@ -1417,6 +1428,7 @@ void ControllerStateMachine(void)
       break;
 
     case STATE_PAUSE:
+      printf("pause\n");
       current_drive_cmd = 0;
       Set_Left_Motor(0);
       Set_Right_Motor(0);
@@ -1424,10 +1436,12 @@ void ControllerStateMachine(void)
       if (ir_running)
       {
         controller_state = STATE_DRIVE;
+        ir_running = 0;
       }
       else if (ir_reset)
       {
         controller_state = STATE_CONFIG;
+        ir_reset = 0;
       }
       break;
 
@@ -1459,14 +1473,17 @@ void CarStateMachine(void)
   switch (car_state)
   {
     case STATE_FIELD_TRACKING:
+      printf("tracking\n");
       path_tracking();
       break;
 
     case STATE_REMOTE:
+      printf("remote\n");
       motor_remote_control(ir_joystick_x, ir_joystick_y);
       break;
 
     case STATE_PATH_TRACKING:
+      printf("path\n");
       process_pathfinder_control((float)(HAL_GetTick() - last_imu_update_ms) / 1000.0f);
       break;
 
@@ -1490,7 +1507,7 @@ void HandleCommand(uint8_t cmd_name, uint16_t val)
       break;
 
     case IR_CMD_PAUSE:
-      ir_running = 0u;
+      ir_pause = 1u;
       break;
 
     case IR_CMD_RESET:
@@ -1503,18 +1520,10 @@ void HandleCommand(uint8_t cmd_name, uint16_t val)
 
     case IR_CMD_MODE:
       ir_mode = val;
-      if (controller_state == STATE_CONFIG && !IR_TX_Busy())
-      {
-        IR_Send_Cmd(IR_CMD_DATA_RECEIVED, (uint16_t)ir_mode);
-      }
       break;
 
     case IR_CMD_PATH:
       ir_path = val;
-      if (controller_state == STATE_CONFIG && !IR_TX_Busy())
-      {
-        IR_Send_Cmd(IR_CMD_DATA_RECEIVED, (uint16_t)ir_mode);
-      }
       break;
 
     case IR_CMD_JOYSTICK_X:
@@ -1535,10 +1544,6 @@ void HandleCommand(uint8_t cmd_name, uint16_t val)
         if (idx + 1u > path_count)
         {
           path_count = idx + 1u;
-        }
-        if (!IR_TX_Busy() && (path_x[idx] != 0u || path_y[idx] != 0u))
-        {
-          IR_Send_Cmd(IR_CMD_DATA_RECEIVED, (uint16_t)ir_mode);
         }
       }
       break;
