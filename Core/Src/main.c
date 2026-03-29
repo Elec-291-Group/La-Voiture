@@ -586,6 +586,8 @@ int main(void)
     {
       ControllerStateMachine();
     }
+
+    IMUUpdate();
     /*--------------------------------------------------------------------------*/
   /* USER CODE END 3 */
   }
@@ -1456,7 +1458,6 @@ void ControllerStateMachine(void)
 
     case STATE_DRIVE:
       //printf("drive\n");
-      IMUUpdate();
       if (ir_pause)
       {
         controller_state = STATE_PAUSE;
@@ -1496,7 +1497,6 @@ void ControllerStateMachine(void)
       current_drive_cmd = 0;
       Set_Left_Motor(0);
       Set_Right_Motor(0);
-      IMUUpdate();
       if (ir_running)
       {
         controller_state = STATE_DRIVE;
@@ -1576,6 +1576,8 @@ void HandleCommand(uint8_t cmd_name, uint16_t val)
 
     case IR_CMD_RESET:
       ir_reset = 1u;
+      ir_running = 0u; // Added
+      ir_pause = 0u;   // Added as well 
       ir_joystick_x = IR_JOYSTICK_CENTER_X;
       ir_joystick_y = IR_JOYSTICK_CENTER_Y;
       ir_mode       = IR_MODE_FIELD;
