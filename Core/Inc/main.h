@@ -73,6 +73,7 @@ void Error_Handler(void);
 
 /* USER CODE BEGIN Private defines */
 enum path_tracking_states {
+  Resting,
   Running,
   Intersection_encountered,
   Intersection_compensation,

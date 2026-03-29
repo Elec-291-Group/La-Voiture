@@ -17,7 +17,6 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <stdio.h>
 #include <string.h>
 #include <math.h>
 #include <stdlib.h>
@@ -166,9 +165,9 @@ CarState car_state = STATE_FIELD_TRACKING;
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 
-void IR_Debug_Update(void);
 void Set_Left_Motor(int speed);
 void Set_Right_Motor(int speed);
+void handle_resting(void);
 void handle_intersection_encountered(void);
 void handle_intersection_turning(void);
 void path_tracking(void);
@@ -534,7 +533,7 @@ int main(void)
     if (ir_rx_ready) {
         ir_rx_ready = 0u;
         HandleCommand(ir_rx_frame.cmd, ir_rx_frame.val);
-        printf("%c %c\n", ir_rx_frame.cmd, ir_rx_frame.val);
+        //printf("%c %c\n", ir_rx_frame.cmd, ir_rx_frame.val);
     }
 
     /*
@@ -676,16 +675,16 @@ void Set_Right_Motor(int speed){
 }
 
 /* TX addr=0x7 continuously, print any received addr=0x6 frame. */
-void IR_Debug_Update(void)
-{
-
-}
 
 void path_tracking(void){
   sample_guidewire_sensors();
   //printf("%d\n", my_tracking_states);
   
   switch(my_tracking_states){
+    case Resting:
+      handle_resting();
+      break;
+
     case Running:
       handle_line_tracking();
       break;
@@ -722,6 +721,19 @@ void sample_guidewire_sensors(void)
   v_left = adc_to_voltage(adc0);
   v_right = adc_to_voltage(adc9);
   v_front = adc_to_voltage(adc1);
+}
+
+void handle_resting(void){
+  Set_Left_Motor(0);
+  Set_Right_Motor(0);
+  intersection_number = 0;
+
+  if (controller_state == STATE_DRIVE){
+    my_tracking_states = Running;
+  }
+  else{
+    my_tracking_states = Resting;
+  }
 }
 
 void update_guidewire_origin_reference(void)
@@ -763,7 +775,7 @@ void handle_line_tracking(void){
   int left_power;
   int right_power;
   uint32_t line_tracking_current_time = HAL_GetTick();
-  if(line_tracking_current_time - intersection_leave_time > 3000){
+  if(line_tracking_current_time - intersection_leave_time > INTERSECTION_REARM_TIME_MS){
     front_inductor_ready = 1;
   }
 
@@ -792,7 +804,6 @@ void handle_line_tracking(void){
     my_tracking_states = Running;
   }
 
-  //printf("left_power: %d; right_power: %d\n", left_power, right_power);
   Set_Left_Motor(left_power);
   Set_Right_Motor(right_power);
 
@@ -800,28 +811,40 @@ void handle_line_tracking(void){
 }
 
 void handle_intersection_encountered(void){
-  Set_Left_Motor(0);
-  Set_Right_Motor(0);
   intersection_number += 1;
-  //my_tracking_states = Intersection_turning;
-  my_tracking_states = Intersection_compensation;
-  intersection_encountered_time = HAL_GetTick();
-  //last_intersection_turning_time = HAL_GetTick();
-  //intersection_turn_current_yaw_angle = 0;
-  //front_inductor_ready = 0;
+  enum intersection_directions current_direction;
+  switch(ir_path){
+    case IR_PATH_1:
+      current_direction = path1[intersection_number-1];
+      break;
+    
+    case IR_PATH_2:
+      current_direction = path2[intersection_number-1];
+      break;
 
-  /* Send crossing action over IR: look up direction for this intersection */
-  if (!IR_TX_Busy())
-  {
-    enum intersection_directions dir;
-    switch (ir_path)
-    {
-      case IR_PATH_1: dir = path1[intersection_number - 1]; break;
-      case IR_PATH_2: dir = path2[intersection_number - 1]; break;
-      case IR_PATH_3: dir = path3[intersection_number - 1]; break;
-      default:        dir = path1[intersection_number - 1]; break;
-    }
-    IR_Send_Cmd(IR_CMD_CROSSING_ACTION, (uint16_t)dir);
+    case IR_PATH_3:
+      current_direction = path3[intersection_number-1];
+      break;
+    
+    default:
+      current_direction = Stop;
+      break;
+  }
+
+  if(current_direction == Forward){ 
+    my_tracking_states = Intersection_turning;
+    //intersection_leave_time = HAL_GetTick();
+    front_inductor_ready = 0;
+  }
+  else{
+    Set_Left_Motor(0);
+    Set_Right_Motor(0);
+    //my_tracking_states = Intersection_turning;
+    my_tracking_states = Intersection_compensation;
+    intersection_encountered_time = HAL_GetTick();
+    //last_intersection_turning_time = HAL_GetTick();
+    //intersection_turn_current_yaw_angle = 0;
+    //front_inductor_ready = 0;
   }
 }
 
@@ -873,8 +896,8 @@ void handle_intersection_turning(void){
 
     case Left:
       if(intersection_turn_current_yaw_angle > LEFT_TURN_DEGREE){
-        Set_Left_Motor(-65); 
-        Set_Right_Motor(65);
+        Set_Left_Motor(-TURNING_SPEED); 
+        Set_Right_Motor(TURNING_SPEED);
         my_tracking_states = Intersection_turning;  
       }
       else{
@@ -887,8 +910,8 @@ void handle_intersection_turning(void){
     
     case Right:
       if(intersection_turn_current_yaw_angle < RIGHT_TURN_DEGREE){
-        Set_Left_Motor(65);
-        Set_Right_Motor(-65);
+        Set_Left_Motor(TURNING_SPEED);
+        Set_Right_Motor(-TURNING_SPEED);
         my_tracking_states = Intersection_turning;  
       }
       else{
@@ -900,7 +923,7 @@ void handle_intersection_turning(void){
       break;
 
     case Stop:
-      my_tracking_states = Intersection_stop;
+      my_tracking_states = Resting;
       intersection_leave_time = HAL_GetTick();
       break;
   }  
@@ -922,7 +945,10 @@ void handle_intersection_turn_settle(void){
 void handle_intersection_stop(void){
   Set_Left_Motor(0);
   Set_Right_Motor(0);
-  my_tracking_states = Intersection_stop;
+  intersection_number = 0;
+  ir_running = 0;
+  controller_state = STATE_CONFIG;
+  my_tracking_states = Resting;
 }
 
 void motor_remote_control(uint16_t x, uint16_t y){
@@ -1415,7 +1441,7 @@ void ControllerStateMachine(void)
   switch (controller_state) 
   {
     case STATE_CONFIG:
-      printf("config\n");
+      //printf("config\n");
       current_drive_cmd = 0;
       //ir_reset = 0;
       //ir_running = 0;
@@ -1429,7 +1455,7 @@ void ControllerStateMachine(void)
       break;
 
     case STATE_DRIVE:
-      printf("drive\n");
+      //printf("drive\n");
       IMUUpdate();
       if (ir_pause)
       {
@@ -1462,12 +1488,11 @@ void ControllerStateMachine(void)
           if (++imu_tx_idx >= 6u) imu_tx_idx = 0u;
         }
         CarStateMachine();
-        controller_state = STATE_DRIVE;
       }
       break;
 
     case STATE_PAUSE:
-      printf("pause\n");
+      //printf("pause\n");
       current_drive_cmd = 0;
       Set_Left_Motor(0);
       Set_Right_Motor(0);
@@ -1512,17 +1537,17 @@ void CarStateMachine(void)
   switch (car_state)
   {
     case STATE_FIELD_TRACKING:
-      printf("tracking\n");
+      //printf("tracking\n");
       path_tracking();
       break;
 
     case STATE_REMOTE:
-      printf("remote\n");
+      //printf("remote\n");
       motor_remote_control(ir_joystick_x, ir_joystick_y);
       break;
 
     case STATE_PATH_TRACKING:
-      printf("path\n");
+      //printf("path\n");
       process_pathfinder_control((float)(HAL_GetTick() - last_imu_update_ms) / 1000.0f);
       break;
 
