@@ -105,6 +105,19 @@ void IR_TX_Init(void)
     HAL_TIM_Base_Start_IT(&htim21);              /* envelope ticker              */
 }
 
+void IR_Send_Cmd(uint8_t cmd, uint16_t val)
+{
+    if (tx_state != TX_FSM_IDLE) return;
+
+    uint32_t frame = pack_frame(cmd, val, IR_ADDR_TX);
+    tx_len   = build_frame(frame, (uint8_t *)tx_buf);
+    tx_pos   = 0u;
+    tx_state = TX_FSM_SENDING;
+
+    if (tx_buf[0u]) carrier_on(); else carrier_off();
+    tx_pos = 1u;
+}
+
 void IR_Send_IMU(uint8_t reg_index, uint16_t val)
 {
     if (tx_state != TX_FSM_IDLE) return;  /* caller must check IR_TX_Busy()    */
