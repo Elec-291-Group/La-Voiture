@@ -185,6 +185,7 @@ void uart_send_line(const char *s);
 void uart_send_uint32(uint32_t value);
 void uart_send_pose(void);
 void uart_send_origin(void);
+void uart_dump_waypoints(const char *tag);
 void process_uart_command(char *line);
 void process_pathfinder_control(float dt_s);
 void sample_guidewire_sensors(void);
@@ -422,6 +423,7 @@ void process_uart_command(char *line)
             path_loaded = (path_count > 0u) ? 1u : 0u;
             path_current_index = 0u;
             uart_send_line("PATH_ACK,LOADED");
+            uart_dump_waypoints("UART");
         }
         return;
     }
@@ -532,7 +534,7 @@ int main(void)
     if (ir_rx_ready) {
         ir_rx_ready = 0u;
         HandleCommand(ir_rx_frame.cmd, ir_rx_frame.val);
-        printf("%u %u\n", ir_rx_frame.cmd, ir_rx_frame.val);
+        printf("%c %c\n", ir_rx_frame.cmd, ir_rx_frame.val);
     }
 
     /*
@@ -1044,6 +1046,36 @@ void uart_send_origin(void)
     origin_sent = 1u;
 }
 
+void uart_dump_waypoints(const char *tag)
+{
+    uint8_t i;
+
+    uart_send_text("PATH_DUMP");
+    if ((tag != NULL) && (*tag != '\0'))
+    {
+        uart_send_text(",");
+        uart_send_text(tag);
+    }
+    uart_send_text(",count,");
+    uart_send_uint32(path_count);
+    uart_send_text(",current,");
+    uart_send_uint32(path_current_index);
+    uart_send_text(",loaded,");
+    uart_send_uint32(path_loaded);
+    uart_send_text("\r\n");
+
+    for (i = 0u; i < path_count; i++)
+    {
+        uart_send_text("WPT_BUF,");
+        uart_send_uint32(i);
+        uart_send_text(",");
+        uart_send_uint32(path_x[i]);
+        uart_send_text(",");
+        uart_send_uint32(path_y[i]);
+        uart_send_text("\r\n");
+    }
+}
+
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     uint16_t i;
@@ -1173,6 +1205,10 @@ void process_pathfinder_control(float dt_s)
 
     Set_Left_Motor(left_cmd);
     Set_Right_Motor(right_cmd);
+
+    //for(int i=0; i<32; i++){
+     //   printf("%u %u",path_x[i], path_y[i]);
+   // }
 /* debug log
     if ((HAL_GetTick() - last_path_control_debug_ms) >= 200u)
     {
@@ -1399,10 +1435,12 @@ void ControllerStateMachine(void)
       {
         controller_state = STATE_PAUSE;
         ir_pause = 0;
+        ir_reset = 0;
       }
       else if (ir_reset) {
         controller_state = STATE_CONFIG;
-        ir_reset;
+         ir_pause = 0;
+        ir_reset = 0;
       }
       else
       {
@@ -1424,6 +1462,7 @@ void ControllerStateMachine(void)
           if (++imu_tx_idx >= 6u) imu_tx_idx = 0u;
         }
         CarStateMachine();
+        controller_state = STATE_DRIVE;
       }
       break;
 
@@ -1545,6 +1584,13 @@ void HandleCommand(uint8_t cmd_name, uint16_t val)
         {
           path_count = idx + 1u;
         }
+        uart_send_text("WPT_RX,");
+        uart_send_uint32(idx);
+        uart_send_text(",");
+        uart_send_uint32(path_x[idx]);
+        uart_send_text(",");
+        uart_send_uint32(path_y[idx]);
+        uart_send_text("\r\n");
       }
       break;
   }
