@@ -20,7 +20,7 @@
 
 // Vehicle Control 
 // needed to be tuned !!!
-#define KP 0.028f // how much the car turns to fix itself ======= used to be 0.015 ======
+#define KP 0.026f // how much the car turns to fix itself ======= used to be 0.015 ======
 #define KS 0.02f // how much the car reduces speed when turning
 #define KF 0.020f // decrease speed before approaching the intersection
 
@@ -42,8 +42,8 @@
 #define PATH_MAX_WAYPOINTS        32u
 #define PATH_REACHED_TOLERANCE_CM 8.0f
 #define DRIVE_SPEED_SCALE_CM_S    0.1f
-#define PATH_FORWARD_SPEED        40
-#define PATH_APPROACH_SPEED       25
+#define PATH_FORWARD_SPEED        60
+#define PATH_APPROACH_SPEED       35
 #define PATH_STEER_GAIN           1.0f
 #define PATH_MAX_STEER_CMD        55
 #define MOTOR_TEST_SPEED          40
