@@ -126,10 +126,10 @@ uint16_t v_front_last;
 float intersection_turn_current_yaw_angle;
 uint32_t intersection_encountered_time;
 uint8_t intersection_number = 0;
-enum intersection_directions path1[] = {Forward, Left, Left, Forward, Right, Left, Right, Stop};
+enum intersection_directions path1[] = {Forward, Left, Stop};//{Forward, Left, Left, Forward, Right, Left, Right, Stop};
 //enum intersection_directions path1[] = {Left, Left, Left, Right, Right, Left, Right, Stop};
-enum intersection_directions path2[] = {Left, Right, Left, Right, Forward, Forward, Stop};
-enum intersection_directions path3[] = {Right, Forward, Right, Left, Right, Left, Forward, Stop};
+enum intersection_directions path2[] = {Right, Forward, Stop};//{Left, Right, Left, Right, Forward, Forward, Stop};
+enum intersection_directions path3[] = {Right, Left, Stop};//{Right, Forward, Right, Left, Right, Left, Forward, Stop};
 uint8_t front_inductor_ready = 1;
 uint32_t intersection_leave_time;
 uint32_t last_intersection_turning_time;
@@ -1445,10 +1445,15 @@ void ControllerStateMachine(void)
     case STATE_CONFIG:
       //printf("config\n");
       current_drive_cmd = 0;
+      if (ir_reset) {
+          ir_reset = 0;
+          controller_state = STATE_CONFIG;
+      }
       //ir_reset = 0;
       //ir_running = 0;
       Set_Left_Motor(0);
       Set_Right_Motor(0);
+
       if (ir_running)
       {
         controller_state = STATE_DRIVE;

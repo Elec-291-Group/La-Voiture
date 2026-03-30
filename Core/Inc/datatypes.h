@@ -41,7 +41,7 @@
 #define POSE_STREAM_PERIOD_MS     100u
 #define PATH_MAX_WAYPOINTS        32u
 #define PATH_REACHED_TOLERANCE_CM 8.0f
-#define DRIVE_SPEED_SCALE_CM_S    1.0f
+#define DRIVE_SPEED_SCALE_CM_S    0.1f
 #define PATH_FORWARD_SPEED        40
 #define PATH_APPROACH_SPEED       25
 #define PATH_STEER_GAIN           1.0f

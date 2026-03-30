@@ -33,9 +33,9 @@
 #define IR_MODE_PATH        0x02u
 
 /* Data values for IR_CMD_PATH */
-#define IR_PATH_1           0x00u
-#define IR_PATH_2           0x01u
-#define IR_PATH_3           0x02u
+#define IR_PATH_1           0x01u
+#define IR_PATH_2           0x02u
+#define IR_PATH_3           0x03u
 
 /* ── RX decoder timing (1 µs timer ticks, SYSCLK=16 MHz, PSC=15) ─────────── */
 
