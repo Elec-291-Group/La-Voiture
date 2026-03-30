@@ -135,6 +135,7 @@ enum intersection_directions path1[] = {Forward, Left, Stop};//{Forward, Left, L
 //enum intersection_directions path1[] = {Left, Left, Left, Right, Right, Left, Right, Stop};
 enum intersection_directions path2[] = {Right, Forward, Stop};//{Left, Right, Left, Right, Forward, Forward, Stop};
 enum intersection_directions path3[] = {Right, Left, Stop};//{Right, Forward, Right, Left, Right, Left, Forward, Stop};
+enum intersection_directions path4[8];
 uint8_t front_inductor_ready = 1;
 uint32_t intersection_leave_time;
 uint32_t last_intersection_turning_time;
@@ -842,6 +843,9 @@ void handle_intersection_encountered(void){
     case IR_PATH_3:
       current_direction = path3[intersection_number-1];
       break;
+
+    /*case IR_PATH_4:
+      current_direction = path4[intersection_number-1] */
     
     default:
       current_direction = Stop;
