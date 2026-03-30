@@ -25,6 +25,7 @@
 #include "config.h"
 #include "datatypes.h"
 #include "vl53l0x.h"
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -86,6 +87,7 @@ static uint8_t origin_sent = 0u;
 static uint32_t last_guidewire_sample_ms = 0u;
 static uint8_t guidewire_origin_locked = 0u;
 static uint8_t guidewire_lock_streak = 0u;
+float normalized_roll = 0.0f;
 
 // IR_TX buffers
 int ir_left_power = 0;
@@ -197,6 +199,7 @@ void sample_guidewire_sensors(void);
 void update_guidewire_origin_reference(void);
 void reset_pose_origin(void);
 float wrap_angle_deg(float angle_deg);
+float roll_to_negative_domain_deg(float wrapped_angle_deg);
 int clamp_motor_speed(int speed);
 int parse_int_simple(const char *s, int *out);
 
@@ -244,6 +247,18 @@ float wrap_angle_deg(float angle_deg)
     while (angle_deg < -180.0f)
     {
         angle_deg += 360.0f;
+    }
+
+    return angle_deg;
+}
+
+float roll_to_negative_domain_deg(float wrapped_angle_deg)
+{
+    float angle_deg = wrap_angle_deg(wrapped_angle_deg);
+
+    if (angle_deg > 0.0f)
+    {
+        angle_deg -= 360.0f;
     }
 
     return angle_deg;
@@ -572,7 +587,7 @@ int main(void)
     */
 
     /*--------------------------------------------------------------------------*/
-    // Collision Detection
+    // Collision Detection & IMU Tip Detection (Roll)
     /*--------------------------------------------------------------------------*/
     static uint32_t last_dist_ms = 0;
     static uint16_t current_distance = 8190; // Default to max range
@@ -594,9 +609,17 @@ int main(void)
       Set_Right_Motor(0);
       current_drive_cmd = 0;
     }
+    else if ((normalized_roll + 180) > 50 || (normalized_roll + 180) < -50)
+    {
+      Set_Left_Motor(0);
+      Set_Right_Motor(0);
+      current_drive_cmd = 0;
+     // printf("car tilted\r\n");
+    }
     else
     {
       ControllerStateMachine();
+      //printf("running normally\r\n");
     }
 
     IMUUpdate();
@@ -844,8 +867,8 @@ void handle_intersection_encountered(void){
       current_direction = path3[intersection_number-1];
       break;
 
-    /*case IR_PATH_4:
-      current_direction = path4[intersection_number-1] */
+    //case IR_PATH_4:
+      //current_direction = path4[intersection_number-1]
     
     default:
       current_direction = Stop;
@@ -1179,7 +1202,6 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 
 void process_pathfinder_control(float dt_s)
 {
-    static uint32_t last_path_control_debug_ms = 0u;
     float target_x;
     float target_y;
     float dx;
@@ -1448,6 +1470,7 @@ void IMUUpdate(void)
       {
         MiniMU_UpdateScaled();
         MiniMU_UpdateAngles();
+        normalized_roll = roll_to_negative_domain_deg(roll_deg);
 
         yaw_deg = wrap_angle_deg(yaw_deg + gz_dps * dt_s);
         pose_x_cm += ((float)current_drive_cmd * DRIVE_SPEED_SCALE_CM_S * dt_s) * cosf((yaw_deg - yaw_zero_deg) / RAD_TO_DEG);
