@@ -26,6 +26,7 @@
 #define IR_CMD_GYRO_Y       11u
 #define IR_CMD_GYRO_Z       12u
 /* Commands 13–24 reserved for future IMU register TX (see ir_tx.h)          */
+#define IR_CMD_ZERO_YAW     39u
 
 /* Data values for IR_CMD_MODE */
 #define IR_MODE_FIELD       0x00u
