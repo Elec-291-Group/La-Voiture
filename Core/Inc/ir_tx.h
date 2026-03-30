@@ -35,6 +35,8 @@ void IR_Send_Cmd(uint8_t cmd, uint16_t val);
 
 #define IR_CMD_DATA_RECEIVED      25u    /* cmd=25, val=mode (0x00/0x01/0x02) — must not collide with RX cmds 0–6 */
 #define IR_CMD_CROSSING_ACTION    26u    /* cmd=26, val=direction action     */
+#define IR_CMD_LEFT_POWER         27u    /* cmd=27, val=high byte positive, low byte negative (abs) */
+#define IR_CMD_RIGHT_POWER        28u    /* cmd=28, val=high byte positive, low byte negative (abs) */
 
 /* Returns 1 while a transmission is in progress, 0 when idle.             */
 uint8_t IR_TX_Busy(void);

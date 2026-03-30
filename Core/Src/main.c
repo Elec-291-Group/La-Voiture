@@ -87,6 +87,10 @@ static uint32_t last_guidewire_sample_ms = 0u;
 static uint8_t guidewire_origin_locked = 0u;
 static uint8_t guidewire_lock_streak = 0u;
 
+// IR_TX buffers
+int ir_left_power = 0;
+int ir_right_power = 0;
+
 uint8_t rx_line_buf[96];
 uint16_t rx_line_len = 0u;
 uint8_t rx_pending_buf[96];
@@ -109,9 +113,10 @@ volatile uint16_t ir_joystick_y = IR_JOYSTICK_CENTER_Y;
 
 volatile uint16_t ir_mode      = 0u;
 volatile uint8_t  ir_running   = 0u;
-volatile uint16_t ir_path      = 0u;
+volatile uint16_t ir_path      = 1u;
 volatile uint8_t ir_reset      = 0u; // 1 reset to config state
 volatile uint8_t ir_pause      = 0u;
+volatile uint8_t zero_yaw      = 0u;
 
 // Inductor readings
 uint16_t adc0;
@@ -512,7 +517,6 @@ int main(void)
       }
   }
 
-  reset_pose_origin();
   last_imu_update_ms = HAL_GetTick();
   last_pose_stream_ms = last_imu_update_ms;
   last_guidewire_sample_ms = last_imu_update_ms;
@@ -534,6 +538,13 @@ int main(void)
         ir_rx_ready = 0u;
         HandleCommand(ir_rx_frame.cmd, ir_rx_frame.val);
         //printf("%c %c\n", ir_rx_frame.cmd, ir_rx_frame.val);
+    }
+
+    // path tracking zero the yaw
+    if (zero_yaw)
+    {
+        reset_pose_origin();
+        zero_yaw = 0u;
     }
 
     /*
@@ -807,6 +818,10 @@ void handle_line_tracking(void){
   Set_Left_Motor(left_power);
   Set_Right_Motor(right_power);
 
+  // ir_tx power update
+  ir_right_power = left_power;
+  ir_left_power = right_power;
+
   v_front_last = v_front;
 }
 
@@ -992,6 +1007,11 @@ void motor_remote_control(uint16_t x, uint16_t y){
   
   Set_Left_Motor(left_power);
   Set_Right_Motor(right_power);
+
+    // ir_tx power update
+  ir_right_power = left_power;
+  ir_left_power = right_power;
+  
 }
 
 void Set_Car_Speed(int speed){
@@ -1482,10 +1502,22 @@ void ControllerStateMachine(void)
             case 2:  cmd = IR_CMD_ACCEL_Z; val = (uint16_t)accel_z; break;
             case 3:  cmd = IR_CMD_GYRO_X;  val = (uint16_t)gyro_x;  break;
             case 4:  cmd = IR_CMD_GYRO_Y;  val = (uint16_t)gyro_y;  break;
-            default: cmd = IR_CMD_GYRO_Z;  val = (uint16_t)gyro_z;  break;
+            case 5:  cmd = IR_CMD_GYRO_Z;  val = (uint16_t)gyro_z;  break;
+            case 6:
+              cmd = IR_CMD_LEFT_POWER;
+              val = (current_left_motor_cmd >= 0)
+                  ? ((uint16_t)current_left_motor_cmd << 8)
+                  : ((uint16_t)(-current_left_motor_cmd));
+              break;
+            default:
+              cmd = IR_CMD_RIGHT_POWER;
+              val = (current_right_motor_cmd >= 0)
+                  ? ((uint16_t)current_right_motor_cmd << 8)
+                  : ((uint16_t)(-current_right_motor_cmd));
+              break;
           }
           IR_Send_Cmd(cmd, val);
-          if (++imu_tx_idx >= 6u) imu_tx_idx = 0u;
+          if (++imu_tx_idx >= 8u) imu_tx_idx = 0u;
         }
         CarStateMachine();
       }
@@ -1596,6 +1628,10 @@ void HandleCommand(uint8_t cmd_name, uint16_t val)
 
     case IR_CMD_JOYSTICK_Y:
       ir_joystick_y = val;
+      break;
+
+    case IR_CMD_ZERO_YAW:
+      zero_yaw = 1u;
       break;
 
     default:

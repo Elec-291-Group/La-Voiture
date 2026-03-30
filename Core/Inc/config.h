@@ -26,6 +26,7 @@
 #define IR_CMD_GYRO_Y       11u
 #define IR_CMD_GYRO_Z       12u
 /* Commands 13–24 reserved for future IMU register TX (see ir_tx.h)          */
+#define IR_CMD_ZERO_YAW     39u
 
 /* Data values for IR_CMD_MODE */
 #define IR_MODE_FIELD       0x00u
@@ -33,9 +34,9 @@
 #define IR_MODE_PATH        0x02u
 
 /* Data values for IR_CMD_PATH */
-#define IR_PATH_1           0x00u
-#define IR_PATH_2           0x01u
-#define IR_PATH_3           0x02u
+#define IR_PATH_1           0x01u
+#define IR_PATH_2           0x02u
+#define IR_PATH_3           0x03u
 
 /* ── RX decoder timing (1 µs timer ticks, SYSCLK=16 MHz, PSC=15) ─────────── */
 
