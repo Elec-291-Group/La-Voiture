@@ -1,0 +1,101 @@
+{
+    "configurations": [
+        {
+            "name": "EFM8 C51",
+            "includePath": [
+                "D:/CrossIDE/Call51/Include/mcs51",
+                "D:/CrossIDE/Call51/Include",
+                "${workspaceFolder}/inc"
+            ],
+            "defines": [
+                // Compiler identification macros
+                "SDCC=1",
+                "__SDCC",
+                "__SDCC_mcs51",
+                "SDCC_mcs51",
+
+                // ==========================================
+                // Memory space qualifiers
+                // (tell IntelliSense to ignore these keywords)
+                // ==========================================
+                "code=",
+                "__code=",
+                "data=",
+                "__data=",
+                "xdata=",
+                "__xdata=",
+                "idata=",
+                "__idata=",
+                "pdata=",
+                "__pdata=",
+                "bdata=",
+                "__bdata=",
+                "near=",
+                "__near=",
+                "far=",
+                "__far=",
+                "generic=",
+
+                // ==========================================
+                // SFR and bit types
+                // (map to standard C types for IntelliSense)
+                // ==========================================
+                "sfr=unsigned char",
+                "__sfr=unsigned char",
+                "sfr16=unsigned int",
+                "__sfr16=unsigned int",
+                "sfr32=unsigned long",
+                "__sfr32=unsigned long",
+                "sbit=unsigned char",
+                "__sbit=unsigned char",
+                "bit=unsigned char",
+                "__bit=unsigned char",
+
+                // ==========================================
+                // Function qualifiers
+                // (strip these so IntelliSense ignores them)
+                // ==========================================
+                "__interrupt(x)=",
+                "interrupt=",
+                "__using(x)=",
+                "using=",
+                "__reentrant=",
+                "reentrant=",
+                "__naked=",
+                "naked=",
+                "__critical=",
+                "critical=",
+                "__banked=",
+                "banked=",
+                "__nonbanked=",
+                "nonbanked=",
+                "__overlay=",
+                "overlay=",
+
+                // ==========================================
+                // Address placement
+                // ==========================================
+                "__at(x)=",
+                "at=",
+
+                // ==========================================
+                // Inline assembly
+                // ==========================================
+                "__asm=asm",
+                "__endasm=",
+
+                // ==========================================
+                // Other SDCC built-ins
+                // ==========================================
+                "__wparam=",
+                "__preserves_regs(...)=",
+                "__sdcc_external_startup=_c51_external_startup"
+            ],
+            "windowsSdkVersion": "10.0.26100.0",
+            "cStandard": "c89",
+            "intelliSenseMode": "gcc-x86",
+            "compilerPath": "D:CrossIDE\\Call51\\Bin\\c51.exe"
+        }
+    ],
+    "version": 4
+}

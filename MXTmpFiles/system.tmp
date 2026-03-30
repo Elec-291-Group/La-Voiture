@@ -1,7 +1,0 @@
-#t__HAL_RCC_SYSCFG_CLK_ENABLE();
-#t__HAL_RCC_PWR_CLK_ENABLE();
-#n
-#t/* SysTick_IRQn interrupt configuration */
-#tNVIC_SetPriority(SysTick_IRQn, 3);
-#n
-#n
