@@ -135,6 +135,7 @@ enum intersection_directions path1[] = {Forward, Left, Stop};//{Forward, Left, L
 //enum intersection_directions path1[] = {Left, Left, Left, Right, Right, Left, Right, Stop};
 enum intersection_directions path2[] = {Right, Forward, Stop};//{Left, Right, Left, Right, Forward, Forward, Stop};
 enum intersection_directions path3[] = {Right, Left, Stop};//{Right, Forward, Right, Left, Right, Left, Forward, Stop};
+enum intersection_directions path_man[8] = {Stop, Stop, Stop, Stop, Stop, Stop, Stop, Stop};
 uint8_t front_inductor_ready = 1;
 uint32_t intersection_leave_time;
 uint32_t last_intersection_turning_time;
@@ -842,13 +843,18 @@ void handle_intersection_encountered(void){
     case IR_PATH_3:
       current_direction = path3[intersection_number-1];
       break;
-    
+
+    case IR_PATH_MANUAL:
+      current_direction = (intersection_number <= 8u)
+          ? path_man[intersection_number-1] : Stop;
+      break;
+
     default:
       current_direction = Stop;
       break;
   }
 
-  if(current_direction == Forward){ 
+  if(current_direction == Forward){
     my_tracking_states = Intersection_turning;
     //intersection_leave_time = HAL_GetTick();
     front_inductor_ready = 0;
@@ -899,12 +905,17 @@ void handle_intersection_turning(void){
     case IR_PATH_3:
       current_direction = path3[intersection_number-1];
       break;
-    
+
+    case IR_PATH_MANUAL:
+      current_direction = (intersection_number <= 8u)
+          ? path_man[intersection_number-1] : Stop;
+      break;
+
     default:
       current_direction = Stop;
       break;
   }
-  
+
   switch(current_direction){
     case Forward:
       my_tracking_states = Running;
@@ -1646,6 +1657,16 @@ void HandleCommand(uint8_t cmd_name, uint16_t val)
     case IR_CMD_ZERO_YAW:
       zero_yaw = 1u;
       break;
+
+    case IR_CMD_MANUAL_PATH:
+    {
+      uint8_t i;
+      for (i = 0u; i < 8u; i++)
+      {
+        path_man[i] = (enum intersection_directions)((val >> (i * 2u)) & 0x03u);
+      }
+      break;
+    }
 
     default:
       /* path waypoint: cmd = PATH_CMD_BASE + index (7..38) */
