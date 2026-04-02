@@ -32,7 +32,7 @@ Routes drawn on the PyQt5 GUI are transmitted via Bluetooth to the controller, t
 
 ### Bidirectional IR Protocol
 
-![IR Protocol Waveform](docs/ir_protocol.png)
+![IR Protocol Waveform](IR Transmitter Side (1).png)
 
 The custom "TIBO IR Protocol" uses pulse-distance encoding on a 38 kHz carrier:
 
