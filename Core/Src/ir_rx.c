@@ -9,10 +9,10 @@
  * Frame (28 bits MSB first):
  *   [27:24] addr (4-bit)  [23:8] val (16-bit)  [7:0] cmd (8-bit)
  *
- * Timing at 1 µs resolution:
- *   Start burst  ≥ 3.5T (920 µs) — detected on rising edge
- *   Bit period threshold: 3.5T (920 µs) → 0 below, 1 at-or-above
- *   Error: period < 2T (526 µs) or > 5T (1315 µs) → reset
+ * Timing at 1 µs resolution (T = 184 µs, 7 carrier cycles):
+ *   Start burst  ≥ 1.5T (276 µs) — detected on rising edge (leader is 2T)
+ *   Bit period threshold: 3.5T (644 µs) → 0 below, 1 at-or-above
+ *   Error: period < 2T (368 µs) or > 5T (920 µs) → reset
  *   Timeout: no edge for > 20 ms → reset
  *
  * CubeMX requirements (already in project):
@@ -89,6 +89,11 @@ void IR_RX_Update(void)
             fsm_reset();
         }
     }
+}
+
+uint8_t IR_RX_Active(void)
+{
+    return (state != ST_IDLE) ? 1u : 0u;
 }
 
 /* ── EXTI callback ───────────────────────────────────────────────────────── */

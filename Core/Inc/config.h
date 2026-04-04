@@ -3,8 +3,8 @@
 
 /* ── IR Protocol — 28-bit pulse-distance ─────────────────────────────────── */
 
-/* Unit period T = 263 µs (10 cycles of 38 kHz carrier)                      */
-#define IR_T_US             263u
+/* Unit period T = 184 µs (7 cycles of 38 kHz carrier)                       */
+#define IR_T_US             184u
 
 /* Frame addresses (4-bit nibble) */
 #define IR_ADDR_RX          0x6u   /* EFM8 → STM32  (frames we accept)       */
@@ -28,6 +28,7 @@
 /* Commands 13–24 reserved for future IMU register TX (see ir_tx.h)          */
 #define IR_CMD_ZERO_YAW     39u
 #define IR_CMD_MANUAL_PATH  40u   /* 16-bit val: 8 intersections × 2 bits    */
+#define IR_CMD_NOP          41u   /* No-op: keeps ping-pong alive            */
 
 /* Data values for IR_CMD_MODE */
 #define IR_MODE_FIELD       0x00u
@@ -42,15 +43,15 @@
 
 /* ── RX decoder timing (1 µs timer ticks, SYSCLK=16 MHz, PSC=15) ─────────── */
 
-/* Start burst minimum width: 3.5T = 920 µs                                  */
-#define IR_LEADER_MIN_US    920u
+/* Start burst minimum width: 1.5T = 276 µs (leader is 2T burst)            */
+#define IR_LEADER_MIN_US    276u
 
 /* Falling-to-falling threshold: 3.5T separates Bit-0 (3T) from Bit-1 (4T)  */
-#define IR_F2F_THRESH_US    920u
+#define IR_F2F_THRESH_US    644u
 
 /* Valid interval bounds: 2T–5T */
-#define IR_F2F_MIN_US       526u   /* 2T  – anything shorter is an error      */
-#define IR_F2F_MAX_US      1315u   /* 5T  – anything longer  is an error      */
+#define IR_F2F_MIN_US       368u   /* 2T  – anything shorter is an error      */
+#define IR_F2F_MAX_US       920u   /* 5T  – anything longer  is an error      */
 
 /* Timeout: reset FSM if no edge for > 20 ms                                  */
 #define IR_TIMEOUT_MS       20u

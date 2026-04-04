@@ -93,6 +93,10 @@ float normalized_roll = 0.0f;
 int ir_left_power = 0;
 int ir_right_power = 0;
 
+// Ping-pong IR TX scheduling
+static uint32_t last_ir_tx_ms = 0u;
+#define IR_TX_DEADLOCK_MS  50u   /* fallback: TX anyway if no RX for this long */
+
 uint8_t rx_line_buf[96];
 uint16_t rx_line_len = 0u;
 uint8_t rx_pending_buf[96];
@@ -221,6 +225,10 @@ void MiniMU_PrintAngles(void);
 uint8_t MiniMU_CalibrateGyro(void);
 
 void IMUUpdate(void); //MAIN IMU FUNCTION
+
+// IR TX queue helpers
+static void SendNextFromQueue(void);
+static void EnqueueTelemetry(void);
 
 // State Machine Functions
 void ControllerStateMachine(void);
@@ -553,7 +561,11 @@ int main(void)
     if (ir_rx_ready) {
         ir_rx_ready = 0u;
         HandleCommand(ir_rx_frame.cmd, ir_rx_frame.val);
-        //printf("%c %c\n", ir_rx_frame.cmd, ir_rx_frame.val);
+        SendNextFromQueue();          /* ping-pong: TX immediately after RX   */
+    }
+    /* Deadlock guard: if no RX packet for IR_TX_DEADLOCK_MS, TX anyway       */
+    if (!IR_TX_Busy() && (now_ms - last_ir_tx_ms) >= IR_TX_DEADLOCK_MS) {
+        SendNextFromQueue();
     }
 
     // path tracking zero the yaw
@@ -1008,24 +1020,18 @@ void motor_remote_control(uint16_t x, uint16_t y){
   int left_power;
   int right_power;
 
-  if(x < 100u){
-    x_in = (((int)x - 100) * 100) / 100;
-  }
-  else if(x > 180u){
-    x_in = (((int)x - 180) * 100) / 75;
+  if(x >= 165u){
+    x_in = (((int)x - 165) * 100) / 90;
   }
   else{
-    x_in = 0;
+    x_in = (((int)x - 165) * 100) / 165;
   }
 
-  if(y < 100u){
-    y_in = (((int)y - 100) * 100) / 100;
-  }
-  else if(y > 180u){
-    y_in = (((int)y - 180) * 100) / 75;
+  if(y >= 170u){
+    y_in = (((int)y - 170) * 100) / 85;
   }
   else{
-    y_in = 0;
+    y_in = (((int)y - 170) * 100) / 170;
   }
   
   /* Dead zone for joy stick */
@@ -1484,6 +1490,7 @@ void IMUUpdate(void)
         MiniMU_UpdateScaled();
         MiniMU_UpdateAngles();
         normalized_roll = roll_to_negative_domain_deg(roll_deg);
+        EnqueueTelemetry();
 
         yaw_deg = wrap_angle_deg(yaw_deg + gz_dps * dt_s);
         pose_x_cm += ((float)current_drive_cmd * DRIVE_SPEED_SCALE_CM_S * dt_s) * cosf((yaw_deg - yaw_zero_deg) / RAD_TO_DEG);
@@ -1497,8 +1504,35 @@ void IMUUpdate(void)
       /* Serial debug mode: suppress periodic origin/pose telemetry. */
     }
 }
+/* ── Pop one frame from the TX queue and transmit it ───────────────────── */
+static void SendNextFromQueue(void)
+{
+    if (IR_TX_Busy()) return;
+    IR_TXQ_SendNext();
+    last_ir_tx_ms = HAL_GetTick();
+}
+
+/* ── Push IMU + motor-power snapshot into the TX queue ─────────────────── */
+static void EnqueueTelemetry(void)
+{
+    IR_TXQ_Push(IR_CMD_ACCEL_X, (uint16_t)accel_x);
+    IR_TXQ_Push(IR_CMD_ACCEL_Y, (uint16_t)accel_y);
+    IR_TXQ_Push(IR_CMD_ACCEL_Z, (uint16_t)accel_z);
+    IR_TXQ_Push(IR_CMD_GYRO_X,  (uint16_t)gyro_x);
+    IR_TXQ_Push(IR_CMD_GYRO_Y,  (uint16_t)gyro_y);
+    IR_TXQ_Push(IR_CMD_GYRO_Z,  (uint16_t)gyro_z);
+    IR_TXQ_Push(IR_CMD_LEFT_POWER,
+        (current_left_motor_cmd >= 0)
+            ? ((uint16_t)current_left_motor_cmd << 8)
+            : ((uint16_t)(-current_left_motor_cmd)));
+    IR_TXQ_Push(IR_CMD_RIGHT_POWER,
+        (current_right_motor_cmd >= 0)
+            ? ((uint16_t)current_right_motor_cmd << 8)
+            : ((uint16_t)(-current_right_motor_cmd)));
+}
+
 // MAIN CONTROLLER STATE MACHINE
-void ControllerStateMachine(void) 
+void ControllerStateMachine(void)
 {
   switch (controller_state) 
   {
@@ -1536,45 +1570,6 @@ void ControllerStateMachine(void)
       }
       else
       {
-        if (!IR_TX_Busy())
-        {
-          static uint8_t imu_tx_idx = 0u;
-          static uint8_t pwr_tx_toggle = 0u;
-          uint16_t val;
-          uint8_t  cmd;
-
-          if (pwr_tx_toggle){
-            static uint8_t pwr_side = 0u;
-            if (pwr_side == 0u) {
-              cmd = IR_CMD_LEFT_POWER;
-              val = (current_left_motor_cmd >= 0)
-                  ? ((uint16_t)current_left_motor_cmd << 8)
-                  : ((uint16_t)(-current_left_motor_cmd));
-            }
-            else {
-              cmd = IR_CMD_RIGHT_POWER;
-              val = (current_right_motor_cmd >= 0)
-                  ? ((uint16_t)current_right_motor_cmd << 8)
-                  : ((uint16_t)(-current_right_motor_cmd));
-            }
-            pwr_side ^= 1u;
-          }
-          else {
-            switch (imu_tx_idx)
-            {
-              case 0:  cmd = IR_CMD_ACCEL_X; val = (uint16_t)accel_x; break;
-              case 1:  cmd = IR_CMD_ACCEL_Y; val = (uint16_t)accel_y; break;
-              case 2:  cmd = IR_CMD_ACCEL_Z; val = (uint16_t)accel_z; break;
-              case 3:  cmd = IR_CMD_GYRO_X;  val = (uint16_t)gyro_x;  break;
-              case 4:  cmd = IR_CMD_GYRO_Y;  val = (uint16_t)gyro_y;  break;
-              default:  cmd = IR_CMD_GYRO_Z;  val = (uint16_t)gyro_z;  break;
-            }
-            if (++imu_tx_idx >= 6u) imu_tx_idx = 0u;
-          }
-          pwr_tx_toggle ^= 1u;
-
-          IR_Send_Cmd(cmd, val);
-        }
         CarStateMachine();
       }
       break;
@@ -1593,48 +1588,6 @@ void ControllerStateMachine(void)
       {
         controller_state = STATE_CONFIG;
         ir_reset = 0;
-      }
-      else
-      {
-        if (!IR_TX_Busy())
-        {
-          static uint8_t imu_tx_idx = 0u;
-          static uint8_t pwr_tx_toggle = 0u;
-          uint16_t val;
-          uint8_t  cmd;
-
-          if (pwr_tx_toggle){
-            static uint8_t pwr_side = 0u;
-            if (pwr_side == 0u) {
-              cmd = IR_CMD_LEFT_POWER;
-              val = (current_left_motor_cmd >= 0)
-                  ? ((uint16_t)current_left_motor_cmd << 8)
-                  : ((uint16_t)(-current_left_motor_cmd));
-            }
-            else {
-              cmd = IR_CMD_RIGHT_POWER;
-              val = (current_right_motor_cmd >= 0)
-                  ? ((uint16_t)current_right_motor_cmd << 8)
-                  : ((uint16_t)(-current_right_motor_cmd));
-            }
-            pwr_side ^= 1u;
-          }
-          else {
-            switch (imu_tx_idx)
-            {
-              case 0:  cmd = IR_CMD_ACCEL_X; val = (uint16_t)accel_x; break;
-              case 1:  cmd = IR_CMD_ACCEL_Y; val = (uint16_t)accel_y; break;
-              case 2:  cmd = IR_CMD_ACCEL_Z; val = (uint16_t)accel_z; break;
-              case 3:  cmd = IR_CMD_GYRO_X;  val = (uint16_t)gyro_x;  break;
-              case 4:  cmd = IR_CMD_GYRO_Y;  val = (uint16_t)gyro_y;  break;
-              default:  cmd = IR_CMD_GYRO_Z;  val = (uint16_t)gyro_z;  break;
-            }
-            if (++imu_tx_idx >= 6u) imu_tx_idx = 0u;
-          }
-          pwr_tx_toggle ^= 1u;
-
-          IR_Send_Cmd(cmd, val);
-        }
       }
       break;
 

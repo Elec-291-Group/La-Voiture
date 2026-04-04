@@ -25,4 +25,8 @@ void IR_RX_Init(void);
 /* Watchdog — call from the main loop; resets FSM on 20 ms silence.          */
 void IR_RX_Update(void);
 
+/* Returns 1 while the RX FSM is actively decoding a frame, 0 when idle.
+   Used by TX to avoid transmitting during reception (half-duplex).          */
+uint8_t IR_RX_Active(void);
+
 #endif /* IR_RX_H */

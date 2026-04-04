@@ -41,6 +41,25 @@ void IR_Send_Cmd(uint8_t cmd, uint16_t val);
 /* Returns 1 while a transmission is in progress, 0 when idle.             */
 uint8_t IR_TX_Busy(void);
 
+/* ── TX Queue ───────────────────────────────────────────────────────────── */
+/* Circular FIFO of {cmd,val} frames.  Push from application code,
+   pop one frame per ping-pong slot.  If the queue is empty when a TX
+   slot opens, a NOP (cmd 41) is sent to keep the ping-pong alive.         */
+
+#define IR_TXQ_SIZE  16u   /* must be power of 2 */
+
+typedef struct { uint8_t cmd; uint16_t val; } ir_txq_entry_t;
+
+/* Push a frame into the queue.  Returns 1 on success, 0 if full.          */
+uint8_t IR_TXQ_Push(uint8_t cmd, uint16_t val);
+
+/* Pop one frame and transmit it.  If queue is empty, sends NOP.
+   Returns immediately if the hardware TX is still busy.                   */
+void    IR_TXQ_SendNext(void);
+
+/* Number of frames waiting in the queue.                                  */
+uint8_t IR_TXQ_Count(void);
+
 /* HAL_TIM_PeriodElapsedCallback is implemented in ir_tx.c.
    No manual ISR wiring needed — TIM21_IRQHandler calls HAL_TIM_IRQHandler. */
 

@@ -20,7 +20,7 @@
 
 // Vehicle Control 
 // needed to be tuned !!!
-#define KP 0.022f // how much the car turns to fix itself ======= used to be 0.015 ======
+#define KP 0.026f // how much the car turns to fix itself ======= used to be 0.015 ======
 #define KS 0.02f // how much the car reduces speed when turning
 #define KF 0.020f // decrease speed before approaching the intersection
 
